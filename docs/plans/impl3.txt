@@ -1,0 +1,61 @@
+# Step 3 Implementation Plan: Conversational RAG Generation Loop
+
+## Background & Motivation
+With the vector ingestion pipeline fully functional (Step 2), the project now requires the core generative components (Step 3). This phase connects our `VectorStoreGateway` semantic search results to a Large Language Model (LLM) via Spring AI’s `ChatModel`. The goal is to receive user questions, retrieve highly relevant paper abstracts, build a grounded system prompt, and generate accurate conversational answers backed by strict, programmatic citations linking back to our canonical PostgreSQL metadata.
+
+## Scope & Impact
+- **Modules Affected**: New package `com.example.arxivrag.chat`, modifications to `config` and `application.yml`.
+- **Dependencies**: Spring AI's `spring-ai-starter-model-openai` is already included from Step 1. No new external dependencies are strictly required.
+
+## Proposed Architecture
+- **System Prompt Design**: A heavily engineered `PromptTemplate` that enforces strict "answer only from the provided context" grounding. It will feed retrieved `RetrievalDocument` records (Title, Abstract) as indexed contexts (e.g., `Document [1]: ...`).
+- **Citation Extraction**: The LLM will be instructed to append numeric bracket citations (e.g., `[1]`, `[2]`) in its conversational Markdown text. A backend regex parser will intercept these brackets, map them back to the retrieved `VectorSearchResult` list, query the `PaperRepository` for full canonical metadata, and attach rich `Citation` objects to the final response.
+- **Offline Mock ChatModel**: A custom `SimpleChatModel` will be implemented and conditionally registered to provide deterministic text and citation outputs when `rag.chat.mock=true` is enabled, ensuring the entire RAG pipeline can be tested for free and offline.
+
+---
+
+## Implementation Steps
+
+### 1. DTO and API Contracts (`com.example.arxivrag.chat`)
+Define the boundary objects for chat communications:
+- **`ChatRequest`**: Contains `String message` and `int topK` (default 5).
+- **`Citation`**: Contains `String arxivId`, `String title`, `List<String> authors`, `String url` (e.g., `https://arxiv.org/abs/{arxivId}`).
+- **`ChatResponse`**: Contains `String responseText` (the Markdown LLM answer) and `List<Citation> citations`.
+
+### 2. Conversational Pipeline (`RagChatService`)
+Implement the core retrieval-generation logic:
+1. Extract the query from `ChatRequest`.
+2. Call `VectorStoreGateway.search(new VectorSearchRequest(query, topK))` to get relevant document hashes/IDs.
+3. Call `PaperRepository.findAllByArxivIdIn(...)` to fetch the full text and titles.
+4. Construct the prompt using Spring AI `PromptTemplate`. Inject the paper contents, ensuring each paper is clearly indexed (`[1]`, `[2]`, etc.).
+5. Call the `ChatModel.call(prompt)`.
+6. Parse the returned text with regex `\[(\d+)\]` to identify which specific document indexes the LLM cited.
+7. Map the used indexes to canonical `Paper` metadata, construct `Citation` objects, and return the `ChatResponse`.
+
+### 3. REST Controller (`ChatController`)
+Expose the RAG loop to the web frontend:
+- Implement `@PostMapping("/api/chat")` in `ChatController` accepting a `@RequestBody ChatRequest` and returning a `ChatResponse`.
+
+### 4. CLI Runner (`ChatCommandLineRunner`)
+Provide a fast terminal-based testing tool:
+- Implement a `CommandLineRunner` listening for `"chat-rag <question>"`. It will invoke `RagChatService` and pretty-print the answer and its citations to the console.
+
+### 5. Local Offline Mock (`SimpleChatModel` & `MockChatConfig`)
+- Create `SimpleChatModel` implementing Spring AI's `ChatModel` interface. It will deterministically return a boilerplate response (e.g., `"This is a simulated offline answer based on [1] and [2]."`) to bypass actual OpenAI/Azure API calls.
+- Register it in `MockChatConfig` under `@ConditionalOnProperty(name = "rag.chat.mock", havingValue = "true", matchIfMissing = true)`.
+- Update `application.yml` to include `rag.chat.mock: true`.
+
+---
+
+## Verification & Testing
+1. **Unit Tests (`RagChatServiceTests`)**:
+   - Mock the `ChatModel` and `VectorStoreGateway`.
+   - Verify prompt construction logic correctly formats and enumerates retrieved papers.
+   - Verify the regex citation parser correctly extracts numbers, ignores invalid/out-of-bounds brackets, and maps them to accurate `Citation` records.
+2. **Integration Tests (`ChatControllerIntegrationTests`)**:
+   - Use `@SpringBootTest` and `MockMvc` to hit `POST /api/chat` with an offline mock model enabled. Ensure the JSON response perfectly aligns with the expected DTO schema.
+3. **Command Line Smoke Test**:
+   - Run `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=chat-rag 'neural networks'"` to confirm full offline pipeline connectivity.
+# Historical / Experimental Plan
+
+This file is a planning note, not the current source of truth. Some implementation claims may describe another branch or a proposed future state. Validate against `src/` and prefer `docs/docs/implementation_steps.txt` for the current ordered plan.

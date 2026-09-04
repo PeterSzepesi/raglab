@@ -50,6 +50,85 @@ The baseline exposes Spring Boot Actuator health information at:
 GET /actuator/health
 ```
 
+## Local PostgreSQL
+
+The `local` and `dev` profiles expect PostgreSQL on `localhost:5432` with database/user/password `arxiv_rag`. Start the bundled pgvector-enabled database with:
+
+```bash
+docker compose up -d postgres
+```
+
+Then run the app:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+On Windows:
+
+```bat
+mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+Flyway owns schema migrations from `src/main/resources/db/migration`, and Hibernate schema generation is disabled with validation-only behavior.
+
+PostgreSQL/Testcontainers integration tests are opt-in so the default build still works on machines without Docker:
+
+```bash
+./mvnw -Ppostgres-it verify
+```
+
+On Windows:
+
+```bat
+mvnw.cmd -Ppostgres-it verify
+```
+
+## Paper schema
+
+The canonical paper metadata table is managed by Flyway in:
+
+```text
+src/main/resources/db/migration/V2__create_papers_table.sql
+src/main/resources/db/vendor/postgresql/V3__create_paper_postgresql_indexes.sql
+```
+
+The Java domain and repository live in:
+
+```text
+src/main/java/com/example/arxivrag/paper/Paper.java
+src/main/java/com/example/arxivrag/paper/PaperRepository.java
+```
+
+Fast repository tests run on H2 in PostgreSQL compatibility mode:
+
+```bat
+mvnw.cmd -Dtest=PaperRepositoryTests test
+```
+
+PostgreSQL-specific schema/index tests require Docker/Testcontainers:
+
+```bat
+mvnw.cmd -Ppostgres-it verify
+```
+
+## arXiv import
+
+The importer reads arXiv JSONL files line by line, filters records by configured categories/date, maps accepted records into `papers`, and upserts by `arxiv_id`.
+
+Run the committed tiny fixture against a local PostgreSQL container:
+
+```bat
+docker compose up -d postgres
+mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local" "-Dspring-boot.run.arguments=import-arxiv src/test/resources/fixtures/arxiv-tiny.jsonl"
+```
+
+Run importer-focused tests without Docker:
+
+```bat
+mvnw.cmd "-Dtest=*Arxiv*,PaperMapperTests" test
+```
+
 The initial UI shell is served by Spring Boot static resources at:
 
 ```text
@@ -94,9 +173,11 @@ The app shell includes navigation and placeholder pages for:
 
 ## Repository documentation
 
-- `docs/decisions.md` — frozen v1 technical decisions
-- `docs/architecture.md` — architecture/package-boundary skeleton
-- `docs/dataset.md` — dataset documentation skeleton
+- `docs/README.md` — documentation map and source-of-truth rules
+- `docs/decisions.md` — v1 technical decisions
+- `docs/architecture.md` — current architecture and target boundaries
+- `docs/dataset.md` — dataset ingestion design
+- `docs/implementation_steps.txt` — independently testable implementation steps
 
 ## Next implementation tickets
 

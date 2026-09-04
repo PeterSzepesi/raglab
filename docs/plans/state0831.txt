@@ -1,0 +1,56 @@
+# Comparison: Current State vs. Project Brief Specification (August 31, 2026)
+
+## 1. What is Fully Implemented (Current State)
+
+We have successfully completed **Step 1 (Relational Ingestion)** and **Step 2 (Embedding & pgvector Ingestion Pipeline)** of the project brief roadmap:
+
+* **Relational Database (`Postgres`)**:
+  * Implemented Flyway-managed schema `papers` table with all key fields (`arxiv_id`, `title`, `abstract_text`, `authors`, `categories`, `submitted_date`, `doi`, `journal_ref`) and native GIN array indexes.
+* **Vector Store Integration (`pgvector`)**:
+  * Programmatic Flyway-driven database migrations enable the `vector` extension, build the standard `vector_store` table required by Spring AI, and set up a high-performance **HNSW cosine similarity index** alongside GIN metadata filtering.
+* **Agnostic Ingestion & Retrieval Pipeline**:
+  * Implemented `RetrievalDocument` representations, stable `RetrievalDocumentFactory` text-normalizing, and `SHA-256` content hashing.
+  * Formulated a decoupled, store-agnostic boundary: `VectorStoreGateway`, `VectorSearchRequest`, and `VectorSearchResult` in package `com.example.arxivrag.vector` (perfectly isolating the rest of our code from pgvector or Spring AI classes).
+* **Resumable Batch Ingestion Service**:
+  * Implemented `EmbeddingIngestionService` which streams paper pages from Postgres, checks existing checkpoints in bulk to prevent N+1 lookups, performs automatic change detection, and updates or skips embeddings to conserve API costs.
+* **Operational Command-Line Runners**:
+  * `import-arxiv <file>`: Idempotently imports arXiv metadata snapshot records.
+  * `embed-papers`: Streams, hashes, and vectorizes papers into pgvector.
+  * `search-vector "<query>"`: Embeds search phrases and renders an aligned tabular console output of scores, titles, and abstract snippets.
+* **Web UI Frontend Shell**:
+  * Serves a static shell from `index.html` communicating with active rest controllers exposing custom system health (`/api/health`) and active feature flags (`/api/runtime-config`).
+
+---
+
+## 2. What is Missing (Remaining Phased Roadmap Steps)
+
+The following stages of the project brief’s **Phased Roadmap** have not yet been implemented on our active branch:
+
+* **Roadmap Step 3: Conversational RAG Generation Loop** (Missing):
+  * Connecting our retrieval results to an LLM chat generation model (such as GPT-4o) to output conversable, grounded answers.
+* **Roadmap Step 4: Hybrid Filters & LLM Router Agent** (Missing):
+  * Implementing the **hybrid use cases** described in the brief:
+    - *Direct SQL+Vector filtering* (performing metadata selection in SQL before similarity queries).
+    - *LLM Router/Agent Pattern* (giving the LLM tools like `sql_query` and `vector_search` so it decides how to gather facts).
+* **Roadmap Step 5: Milvus and Chroma Adapters** (Missing):
+  * Swapping our agnostic `VectorStoreGateway` with concrete Milvus and Chroma implementations to run the vector-database comparison.
+* **Roadmap Step 6: Ingestion & Query Benchmarking Harness** (Missing):
+  * Implementing code that captures actual ingestion times, index build times, query latencies ($p_{50}$/$p_{95}$), and retrieval accuracy metrics.
+* **Roadmap Step 7: Interactive Chat Interface** (Missing):
+  * Expanding the static frontend shell into an interactive, conversational chat dashboard.
+
+---
+
+## 3. What is Differing (Architectural Updates & Improvements)
+
+We introduced some key updates that improve developer experience, align with modern API releases, and solve dataset bottlenecks:
+
+| Area | Brief Description / Expectation | Implemented / Differing State | Rationale / Benefit |
+|---|---|---|---|
+| **Spring AI Architecture** | Azure OpenAI and OpenAI as separate starters. | Unified Spring AI 2.0.0 model starter (`spring-ai-starter-model-openai`). | In Spring AI 2.x, Azure OpenAI was merged into the unified OpenAI starter. We configured flexible variable mapping supporting both standard OpenAI and Azure OpenAI natively. |
+| **Offline Development** | Expected live cloud model connections from day one. | Built-in offline **`SimpleEmbeddingModel`** & **`MockEmbeddingConfig`**. | Generates deterministic L2-normalized vector dimensions offline. Allows developers to test, compile, and run the ingestion and search pipeline instantly and 100% for free without external API keys. |
+| **DOI Character Length** | Initial database schemas expected short DOIs (e.g. length 100). | Upgraded database `doi` column to **`VARCHAR(255)`** and JPA entities to match. | Real arXiv datasets contain publisher-specific DOIs that exceed 100 characters. Upgrading the column prevents `DataIntegrityViolationExceptions` during bulk imports. |
+| **Checkpoints Table** | General expectation of resumable ingestion tracking. | Formulated a dedicated composite-key **`embedding_checkpoints`** table. | Keeps a permanent record of `(paper_id, chunk_id, embedding_model)` with content hashes. Supports instant resumability and tracks if abstracts change over time. |
+# Historical / Experimental State Note
+
+This file may describe a previous or separate implementation branch. The current executable state is defined by `src/`, `pom.xml`, tests, and the source-of-truth docs under `docs/docs/`.

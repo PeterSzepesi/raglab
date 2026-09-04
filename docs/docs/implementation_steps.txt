@@ -1,0 +1,372 @@
+# Implementation Steps
+
+This plan starts from the current executable baseline. Each step must be testable independently before moving to the next one.
+
+## Step 0 — Preserve The Baseline
+
+Current behavior:
+
+- `GET /` serves the static UI shell.
+- `GET /api/health` returns safe backend health.
+- `GET /api/runtime-config` returns non-secret runtime flags.
+- `GET /actuator/health` returns Actuator health.
+
+Validation:
+
+```powershell
+.\mvnw.cmd clean verify
+.\mvnw.cmd spring-boot:run
+```
+
+Manual smoke:
+
+```text
+http://localhost:8080/
+http://localhost:8080/api/health
+http://localhost:8080/api/runtime-config
+```
+
+Acceptance criteria:
+
+- Existing tests pass.
+- Runtime config does not expose API keys, passwords, tokens, or raw environment variables.
+
+## Step 1 — Add PostgreSQL, Flyway, And Testcontainers
+
+Objective:
+Make persistence reproducible before adding domain logic.
+
+Implementation:
+
+- Add `spring-boot-starter-data-jpa`.
+- Add PostgreSQL JDBC driver.
+- Add Flyway.
+- Add Testcontainers for PostgreSQL integration tests.
+- Add local Docker Compose for manual development.
+- Disable Hibernate schema creation.
+
+Files likely affected:
+
+- `pom.xml`
+- `src/main/resources/application*.yml`
+- `docker-compose.yml`
+- `src/test/java/...`
+
+Validation:
+
+```powershell
+.\mvnw.cmd test
+docker compose up -d postgres
+```
+
+Acceptance criteria:
+
+- Spring context still boots under `test`.
+- A migration smoke test can connect to PostgreSQL.
+- No schema is created by Hibernate auto-DDL.
+
+## Step 2 — Create The Paper Schema
+
+Objective:
+Store canonical paper metadata in PostgreSQL.
+
+Implementation:
+
+- Add Flyway migration for `papers`.
+- Add indexes for `arxiv_id`, `submitted_date`, and `categories`.
+- Add `Paper` domain model.
+- Add repository queries needed by import and citation resolution.
+
+Standalone tests:
+
+- migration creates expected columns and indexes;
+- unique `arxiv_id` is enforced;
+- repository can save and read a paper;
+- category/date queries return deterministic rows.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Paper* test
+```
+
+Acceptance criteria:
+
+- No arXiv reader or embedding code is required to test the paper domain.
+
+## Step 3 — Implement Streaming arXiv Import
+
+Objective:
+Load a deterministic dataset slice into `papers`.
+
+Implementation:
+
+- `ArxivRecord`
+- `ArxivDatasetReader`
+- `ArxivRecordFilter`
+- `PaperMapper`
+- `ArxivImportService`
+- CLI runner for `import-arxiv <file-path>`
+
+Standalone tests:
+
+- reader handles a tiny JSONL fixture;
+- filter accepts/rejects category/date cases;
+- mapper normalizes whitespace and nulls;
+- import service is idempotent.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Arxiv*,*Import* test
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=import-arxiv .\src\test\resources\fixtures\arxiv-tiny.jsonl"
+```
+
+Acceptance criteria:
+
+- Re-running import does not duplicate rows.
+- Tiny fixture import prints counts and exits cleanly.
+
+## Step 4 — Build Retrieval Documents
+
+Objective:
+Convert papers into stable text documents for embedding.
+
+Implementation:
+
+- `RetrievalDocument`
+- `RetrievalDocumentFactory`
+- SHA-256 content hash
+- configurable chunking strategy, initially one chunk per paper
+
+Standalone tests:
+
+- exact text format is stable;
+- whitespace normalization happens before hashing;
+- changing title or abstract changes the hash;
+- same input produces same hash.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*RetrievalDocument* test
+```
+
+Acceptance criteria:
+
+- No database or model provider is required for document formatting tests.
+
+## Step 5 — Add Embedding Checkpointing
+
+Objective:
+Make embedding ingestion resumable and cost-aware.
+
+Implementation:
+
+- `embedding_checkpoints` migration.
+- checkpoint repository.
+- deterministic offline embedding model for local/test profile.
+- `EmbeddingIngestionService`.
+- CLI runner for `embed-papers`.
+
+Standalone tests:
+
+- unchanged papers are skipped;
+- changed content hash triggers re-embedding;
+- failed batch preserves previously committed checkpoints;
+- offline embedding returns stable 1536-dimension vectors.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Embedding* test
+```
+
+Acceptance criteria:
+
+- Embedding ingestion can run locally without Azure/OpenAI keys.
+
+## Step 6 — Implement pgvector Gateway
+
+Objective:
+Persist and search vectors behind a store-neutral contract.
+
+Implementation:
+
+- `VectorStoreGateway`.
+- `EmbeddedDocument`.
+- `VectorSearchRequest`.
+- `VectorSearchResult`.
+- pgvector Flyway migration.
+- `PgVectorStoreGateway`.
+- CLI or REST smoke path for semantic search.
+
+Standalone tests:
+
+- parent `vector` package has no pgvector-specific imports;
+- fake gateway contract tests pass;
+- pgvector integration test returns known nearest vectors in score order.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Vector* test
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=search-vector neural retrieval"
+```
+
+Acceptance criteria:
+
+- Empty vector table returns a clean zero-result response.
+- Search results include enough IDs to resolve paper citations.
+
+## Step 7 — Add Retrieval API
+
+Objective:
+Expose semantic search without chat generation.
+
+Implementation:
+
+- `POST /api/search`
+- request: query, topK, optional categories/date range
+- response: ranked papers, scores, snippets, metadata
+
+Standalone tests:
+
+- mock gateway returns deterministic ranked hits;
+- missing query returns `400`;
+- topK has safe lower/upper bounds;
+- vector hits are resolved through `PaperRepository`.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Search* test
+```
+
+Acceptance criteria:
+
+- The frontend can show useful search results before LLM chat exists.
+
+## Step 8 — Add Grounded Chat API
+
+Objective:
+Generate cited answers from retrieved papers.
+
+Implementation:
+
+- `POST /api/chat`
+- retrieval prompt builder
+- chat model abstraction/configuration
+- mock chat model for tests
+- citation object sourced from PostgreSQL
+
+Standalone tests:
+
+- answer contains citations returned by retrieval;
+- prompt excludes papers not retrieved;
+- empty retrieval produces a clear no-evidence answer;
+- live provider is not required for normal tests.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Chat* test
+```
+
+Acceptance criteria:
+
+- Every non-empty answer includes citation metadata.
+- The API can run in a mock/offline profile.
+
+## Step 9 — Upgrade The Static UI
+
+Objective:
+Wire the existing UI shell to real APIs.
+
+Implementation:
+
+- search page calls `POST /api/search`;
+- chat page calls `POST /api/chat`;
+- settings page continues using safe runtime config;
+- system status includes database/vector readiness once available.
+
+Standalone tests:
+
+- existing backend tests still pass;
+- route rendering can be checked manually without a frontend build;
+- API errors render cleanly.
+
+Validation:
+
+```powershell
+.\mvnw.cmd clean verify
+```
+
+Manual smoke:
+
+```text
+http://localhost:8080/#/search
+http://localhost:8080/#/chat
+```
+
+Acceptance criteria:
+
+- UI does not require Node, npm, or a separate build.
+
+## Step 10 — Add Milvus And Chroma
+
+Objective:
+Compare vector stores without rewriting application services.
+
+Implementation:
+
+- `vector.milvus` adapter.
+- `vector.chroma` adapter.
+- profile-based active vector store selection.
+- Docker Compose services for each backend.
+
+Standalone tests:
+
+- each adapter passes the same gateway contract tests;
+- app services still depend only on `VectorStoreGateway`;
+- unsupported metadata filters fail explicitly, not silently.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Vector* test
+```
+
+Acceptance criteria:
+
+- Switching vector stores is configuration-driven.
+
+## Step 11 — Add Benchmark Harness
+
+Objective:
+Produce comparable numbers and operational notes.
+
+Implementation:
+
+- fixed query set;
+- fixed corpus profiles;
+- ingestion timing;
+- query latency p50/p95;
+- recall or human-reviewed relevance notes;
+- markdown/CSV report output.
+
+Standalone tests:
+
+- metrics calculations are deterministic;
+- benchmark can run against a fake gateway;
+- report file format is stable.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Benchmark* test
+```
+
+Acceptance criteria:
+
+- Benchmark output is reproducible enough for pgvector/Milvus/Chroma comparison.

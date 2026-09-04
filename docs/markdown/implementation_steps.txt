@@ -1,0 +1,7 @@
+Historical copy.
+
+The current source of truth is:
+
+docs/docs/implementation_steps.txt
+
+Keep this file only as a compatibility pointer for prompts or tools that still look under docs/markdown/.

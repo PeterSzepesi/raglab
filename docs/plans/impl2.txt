@@ -1,0 +1,70 @@
+# Step 2 Implementation Plan: Embedding and pgvector Pipeline
+
+## Background & Motivation
+The project has successfully implemented Step 1: reading raw arXiv JSON dataset and storing canonical metadata in PostgreSQL. Step 2 requires generating semantic embeddings from the paper's title and abstract, and storing these embeddings inside `pgvector` to enable vector similarity search. The application should not yet implement LLM chat; the goal is strictly a robust, resumable ingestion pipeline and a retrieval-only interface that operates reliably in batches.
+
+## Scope & Impact
+- **Modules Affected**: `embedding`, `vector`, `vector.pgvector`.
+- **Infrastructure**: Existing pgvector container will be utilized. Flyway will manage schema evolution.
+- **Dependencies**: Spring AI will be added to `pom.xml` (`spring-ai-azure-openai-spring-boot-starter` or similar, along with `spring-ai-pgvector-store-spring-boot-starter`).
+
+## Proposed Architecture
+- **Vector DB Integration**: We will use Spring AI's `PgVectorStore` internally within `PgVectorStoreGateway` to handle cosine distance queries and pgvector syntax. However, we will disable its schema auto-initialization.
+- **Schema Management**: Flyway will fully own the creation of the `vector_store` table and the necessary HNSW indexes.
+- **Idempotency**: A dedicated PostgreSQL table `embedding_checkpoints` will track the exact model and content hash used for each chunk, ensuring ingestion is resumable and papers are only re-embedded when their content changes.
+
+---
+
+## Implementation Steps
+
+### 1. Update Dependencies & Configuration
+- **pom.xml**: Add Spring AI BOM (version `2.0.0`) and dependencies for Azure OpenAI and pgvector store.
+- **application.yml**: Configure Azure OpenAI (with fallback placeholders for OpenAI) specifying the model (`text-embedding-3-small`), dimension (`1536`), and disable Spring AI pgvector auto-initialization (`spring.ai.vectorstore.pgvector.initialize-schema=false`).
+
+### 2. Database Migrations (Flyway)
+Create two new Flyway migrations:
+- `V2__create_embedding_checkpoints_table.sql`: Creates a table to track ingestion progress:
+  - `paper_id` (VARCHAR), `chunk_id` (VARCHAR), `embedding_model` (VARCHAR), `content_hash` (VARCHAR), `embedded_at` (TIMESTAMP).
+- `V3__enable_pgvector_and_vector_store.sql`: 
+  - `CREATE EXTENSION IF NOT EXISTS vector;`
+  - Creates the `vector_store` table structure required by Spring AI, including a `VECTOR(1536)` column for embeddings.
+  - Creates an `hnsw` index using `vector_cosine_ops` for fast similarity search.
+
+### 3. Domain and Ingestion Models (`com.example.arxivrag.embedding`)
+- **`RetrievalDocument`**: Defines the single chunk per paper (Title + Abstract). Contains `documentId`, `paperId`, `text`, and metadata.
+- **`RetrievalDocumentFactory`**: Maps `Paper` to `RetrievalDocument` and calculates a stable `contentHash`.
+- **`EmbeddingCheckpoint` & Repository**: JPA entity mapping to `embedding_checkpoints` for checking idempotency before calling the embedding API.
+
+### 4. Vector Store Contracts (`com.example.arxivrag.vector`)
+- Define abstract boundaries so the application never references pgvector directly:
+  - **`VectorSearchRequest`**: Contains `query` and `topK`.
+  - **`VectorSearchResult`**: Contains `paperId`, `chunkId`, and `score`.
+  - **`VectorStoreGateway`**: Interface providing `save(...)` and `search(...)` contracts.
+- **`PgVectorStoreGateway` (`com.example.arxivrag.vector.pgvector`)**: Implements `VectorStoreGateway`. Internally injects Spring AI's `VectorStore` (PgVectorStore implementation) to handle the translation to/from pgvector.
+
+### 5. Resumable Batch Embedding Pipeline (`EmbeddingIngestionService`)
+- Implement a batch ingestion loop:
+  1. Read papers in batches of 100 (configurable) from `PaperRepository`.
+  2. Map to `RetrievalDocument`s.
+  3. Query `embedding_checkpoints` to identify which chunks haven't been embedded yet or whose hash has changed.
+  4. Embed only the missing/changed documents using Spring AI's `EmbeddingModel`.
+  5. Save generated embeddings via `VectorStoreGateway.save(...)`.
+  6. Upsert progress records into `embedding_checkpoints`.
+
+### 6. Command-Line Runners
+- **`EmbeddingIngestionCommandLineRunner`**: Listens for the `embed-papers` argument to trigger the `EmbeddingIngestionService` and exits successfully.
+- **`VectorSearchCommandLineRunner`**: Listens for the `search-vector <query>` argument. Performs a semantic search via `VectorStoreGateway`, fetches canonical details using `PaperRepository.findAllByArxivIdIn()`, and prints formatted results to the console.
+
+---
+
+## Verification & Testing
+1. **Unit Tests**: Test the content hashing logic in `RetrievalDocumentFactory`. Test the batching and checkpoint filtering logic in `EmbeddingIngestionService` with mocks.
+2. **Integration Tests**: 
+   - Write a `PgVectorStoreGatewayIntegrationTests` class using Testcontainers (or existing Docker setup) to verify cosine distance vector search accurately returns inserted documents.
+   - Write an end-to-end command-line test mimicking `search-vector "hallucinations in large language models"`, ensuring it returns valid paper titles mapped back from PostgreSQL.
+
+## Migration & Rollback
+- Since Flyway is managing the schema, rollback is achieved either manually or by creating standard `U` undo scripts if necessary. Re-running the `embed-papers` CLI command will safely skip already processed hashes, making interrupted ingestion runs trivial to resume.
+# Historical / Experimental Plan
+
+This file is a planning note, not the current source of truth. Some implementation claims may describe another branch or a proposed future state. Validate against `src/` and prefer `docs/docs/implementation_steps.txt` for the current ordered plan.

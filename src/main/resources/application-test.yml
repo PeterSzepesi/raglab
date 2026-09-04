@@ -1,3 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:arxiv_rag_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+  jpa:
+    show-sql: false
+
 rag:
   runtime:
     profile: test
@@ -8,3 +16,8 @@ rag:
     chat-enabled: false
     vector-stores-enabled: false
     benchmarks-enabled: false
+
+arxiv:
+  import:
+    max-records: 500
+    batch-size: 2

@@ -1,3 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/arxiv_rag
+    username: arxiv_rag
+    password: arxiv_rag
+  jpa:
+    show-sql: false
+
 rag:
   runtime:
     profile: dev

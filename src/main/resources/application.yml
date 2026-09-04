@@ -3,6 +3,13 @@ spring:
     name: arxiv-rag
   profiles:
     default: local
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration,classpath:db/vendor/{vendor}
 
 rag:
   runtime:
@@ -14,6 +21,18 @@ rag:
     chat-enabled: false
     vector-stores-enabled: false
     benchmarks-enabled: false
+
+arxiv:
+  import:
+    categories:
+      - cs.CL
+      - cs.AI
+      - cs.LG
+      - cs.CV
+    from-date: 2022-01-01
+    max-records: 50000
+    batch-size: 1000
+    malformed-record-policy: warn-and-skip
 
 management:
   endpoints:

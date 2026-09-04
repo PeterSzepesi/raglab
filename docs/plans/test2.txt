@@ -1,0 +1,157 @@
+# Testing Plan: Step 2 — Embedding & pgvector Ingestion Pipeline
+
+## 1. Quality Assurance Strategy & Tooling
+To guarantee the technical integrity of the pipeline, we will use a multi-tiered testing strategy:
+- **Unit Tests (`JUnit 5`, `Mockito`)**: High-speed tests verifying isolated logic such as mapping, formatting, hashing, and batching constraints.
+- **Integration Tests (`Testcontainers` or Local Docker Profile)**: Tests verifying real-world behavior of PostgreSQL migrations, native schema constraints, index performance, and `pgvector` distance calculations.
+- **End-to-End Command Line Verification**: CLI verification asserting that runner triggers perform successfully, exit codes are correct, and search results render correctly to stdout.
+
+---
+
+## 2. Test Scenarios per Implementation Step
+
+### Step 1: Update Dependencies & Configuration
+
+* **Test Scenario 1.1: Dependency Convergence & Compilation**
+  * **Type**: Smoke/Build Test (`mvn clean compile`)
+  * **Objective**: Confirm that the Spring AI dependencies integrated into the `pom.xml` resolve without version conflicts or library collisions.
+  * **Steps**: Run `./mvnw clean compile` on a clean environment.
+  * **Expected Outcome**: Compilation succeeds; all transitive Maven dependencies are successfully fetched and resolved.
+
+* **Test Scenario 1.2: Context Bootstrap with Schema Creation Disabled**
+  * **Type**: Integration Test (`ArxivRagApplicationTests`)
+  * **Objective**: Verify that the Spring context starts successfully when properties such as `spring.ai.vectorstore.pgvector.initialize-schema=false` are configured.
+  * **Expected Outcome**: Context starts smoothly; the Spring AI auto-initializer does *not* attempt to query or build database tables implicitly.
+
+---
+
+### Step 2: Database Migrations (Flyway)
+
+* **Test Scenario 2.1: Checkpoint Table Schema Integrity**
+  * **Type**: Integration/Database Test
+  * **Objective**: Verify Flyway correctly creates the `embedding_checkpoints` table with all columns and the primary key constraints.
+  * **Steps**: Query database catalog metadata after migration.
+  * **Expected Outcome**: 
+    - Table `embedding_checkpoints` exists.
+    - Columns: `paper_id` (VARCHAR), `chunk_id` (VARCHAR), `embedding_model` (VARCHAR), `content_hash` (VARCHAR), and `embedded_at` (TIMESTAMP) are present.
+    - Primary key is a composite of `(paper_id, chunk_id, embedding_model)`.
+    - Violations are thrown if duplicate composite keys are written.
+
+* **Test Scenario 2.2: pgvector Extension and Store Creation**
+  * **Type**: Integration/Database Test
+  * **Objective**: Ensure pgvector can be used and the Spring AI target table is created via the migrations.
+  * **Expected Outcome**:
+    - Querying `SELECT * FROM pg_extension WHERE extname = 'vector'` returns 1 row.
+    - Table `vector_store` exists with correct types, including a `VECTOR(1536)` column for embeddings.
+    - The `hnsw` index using `vector_cosine_ops` is successfully created and registered on `vector_store(embedding)`.
+
+* **Test Scenario 2.3: Idempotent Migrations Run**
+  * **Type**: Database Integration Test
+  * **Objective**: Confirm that the Flyway migration suite remains idempotent.
+  * **Steps**: Trigger migrations on a database that has already been fully migrated.
+  * **Expected Outcome**: Migrations complete in `< 100ms` with zero changes applied and zero errors thrown.
+
+---
+
+### Step 3: Domain and Ingestion Models
+
+* **Test Scenario 3.1: Document Formatting and Mapping**
+  * **Type**: Unit Test (`RetrievalDocumentFactoryTests`)
+  * **Objective**: Ensure whitespace and title-abstract layouts are mapped cleanly.
+  * **Steps**: Create a `Paper` with un-trimmed strings. Map it using `RetrievalDocumentFactory`.
+  * **Expected Outcome**: The mapped document's text is exactly normalized to:
+    ```text
+    Title: <normalized_title>
+
+    Abstract:
+    <normalized_abstract>
+    ```
+
+* **Test Scenario 3.2: Hash Sensitiveness and Stability**
+  * **Type**: Unit Test (`RetrievalDocumentFactoryTests`)
+  * **Objective**: Confirm that `content_hash` is stable for identical documents, but sensitive to any changes.
+  * **Steps**:
+    - Assert that running the factory on the same `Paper` twice yields the exact same hash.
+    - Assert that modifying a single character in the title or abstract yields a completely different hash (e.g. SHA-256).
+    - Assert that casing/spacing normalization occurs *prior* to hashing so formatting variations do not cause a hash mismatch.
+
+* **Test Scenario 3.3: Ingestion Progress Persistence**
+  * **Type**: Database Integration Test
+  * **Objective**: Verify CRUD operations on checkpoint persistence.
+  * **Expected Outcome**: Checks can write a progress record, find it by composite key, and delete/update it.
+
+---
+
+### Step 4: Vector Store Contracts
+
+* **Test Scenario 4.1: Architectural Decoupling Boundary**
+  * **Type**: Compile-time check
+  * **Objective**: Ensure pgvector or Spring AI classes are never imported in the `vector` parent package or domain services.
+  * **Expected Outcome**: Domain services package only interacts with `VectorStoreGateway`, `VectorSearchRequest`, and `VectorSearchResult`.
+
+* **Test Scenario 4.2: Cosine Similarity Retrieval Correctness**
+  * **Type**: Database Integration Test (`PgVectorStoreGatewayIntegrationTests`)
+  * **Objective**: Verify distance queries and sorting correctly match theoretical cosine similarities.
+  * **Steps**:
+    - Insert 3 documents with manually set vector values:
+      - Doc A: `[1.0, 0.0, 0.0, ...]` (Highly similar to query)
+      - Doc B: `[0.7, 0.7, 0.0, ...]` (Moderately similar)
+      - Doc C: `[0.0, 1.0, 0.0, ...]` (Orthogonal)
+    - Perform a similarity search with query: `[1.0, 0.0, 0.0, ...]` with `topK = 2`.
+  * **Expected Outcome**: Doc A is returned first (highest score), followed by Doc B. Doc C is excluded.
+
+---
+
+### Step 5: Resumable Batch Embedding Pipeline
+
+* **Test Scenario 5.1: Pipeline Chunking and Batch Boundaries**
+  * **Type**: Unit Test with Mocks (`EmbeddingIngestionServiceTests`)
+  * **Objective**: Ensure that papers are split and requested in discrete, configurable chunks.
+  * **Steps**: Mock `PaperRepository` to return 250 records. Trigger ingestion with batch-size configured to `100`.
+  * **Expected Outcome**: The ingestion executes exactly 3 batch operations (Batch 1: 100, Batch 2: 100, Batch 3: 50). `EmbeddingModel.embed()` is called exactly 3 times.
+
+* **Test Scenario 5.2: Resumability & Skipping Idempotency**
+  * **Type**: Unit/Integration Test
+  * **Objective**: Verify that papers with existing valid checkpoints are skipped, saving API token cost.
+  * **Steps**: Seed 5 papers. Write checkpoint records matching content hash and model for 2 of them. Run ingestion.
+  * **Expected Outcome**: The pipeline queries only the 3 remaining papers, requests embeddings for those 3, and writes exactly 3 checkpoints. The other 2 are untouched.
+
+* **Test Scenario 5.3: Change-Detection and Re-embedding**
+  * **Type**: Unit/Integration Test
+  * **Objective**: Ensure that if a paper is modified in Postgres, it is re-embedded.
+  * **Steps**: Seed 1 paper and its checkpoint. Update the paper's abstract. Run ingestion.
+  * **Expected Outcome**: The pipeline detects the hash mismatch, sends a new request to `EmbeddingModel`, stores the new vector, and updates the checkpoint timestamp and hash.
+
+* **Test Scenario 5.4: Fault Tolerance and Partial Progress Conservation**
+  * **Type**: Unit/Integration Test
+  * **Objective**: Confirm that a failure mid-stream does not corrupt previous checkpoints.
+  * **Steps**: Run ingestion with 3 batches. Mock the `EmbeddingModel` to throw a `RuntimeException` during the 2nd batch.
+  * **Expected Outcome**: Ingestion fails with exception. Checkpoints and vector embeddings for the 1st batch remain committed in the DB. The 2nd and 3rd batches are not recorded. Running the ingestion a second time resumes exactly from the 2nd batch.
+
+---
+
+### Step 6: Command-Line Runners
+
+* **Test Scenario 6.1: Ingestion CLI Boot and Exit**
+  * **Type**: Smoke/Command-Line Test
+  * **Objective**: Ensure the application triggers ingestion and shuts down safely when called via CLI.
+  * **Steps**: Invoke `.\mvnw.cmd spring-boot:run -Dspring-boot.run.arguments="embed-papers"`.
+  * **Expected Outcome**: Application boots, runs the ingestion service to completion, and exits with a `0` exit status.
+
+* **Test Scenario 6.2: End-to-End Semantic Search Command**
+  * **Type**: Manual/Integration CLI Test
+  * **Objective**: Confirm that queries are successfully matched, vectorized, searched, and resolved back to Postgres details.
+  * **Steps**: Run `.\mvnw.cmd spring-boot:run -Dspring-boot.run.arguments="search-vector 'neural network models'"` against an ingested database.
+  * **Expected Outcome**: Console displays:
+    - Search string input confirmation.
+    - A formatted table containing: Cosine Score, arXiv Identifier, Title, and Abstract text snippet.
+    - Zero stack-traces or warnings.
+
+* **Test Scenario 6.3: Empty Database Boundary Handling**
+  * **Type**: CLI Boundary Test
+  * **Objective**: Assert grace when running queries on an unpopulated vector database.
+  * **Steps**: Run `search-vector "topic"` on an empty database.
+  * **Expected Outcome**: CLI prints a clean `"0 semantically relevant papers found"` message and exits with status `0` without throwing `NullPointerException`.
+# Historical / Experimental Test Plan
+
+This file is useful input for future implementation, but it assumes embedding and pgvector work that is not present in the current branch. Prefer `docs/docs/implementation_steps.txt` for current acceptance criteria.

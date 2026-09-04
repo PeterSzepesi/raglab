@@ -1,0 +1,223 @@
+# Frontend UI Implementation Plan: Interactive RAG Chat Dashboard
+
+## Background & Motivation
+In Step 3, we successfully implemented the back-end grounded RAG loop (`POST /api/chat` and its offline mock model). To enable a rich, interactive, and visually stunning developer demonstration, we will now implement the frontend chat UI. This will replace the generic "Chat" placeholder card with an active chat interface.
+
+## Scope & Impact
+- **Files Affected**:
+  - `src/main/resources/static/index.html` (no structural changes needed, already supports dynamic routing).
+  - `src/main/resources/static/assets/app.js` (add client-side routing check, add chat state, and render functions).
+  - `src/main/resources/static/assets/app.css` (add visual classes for chat bubbles, scrollable panels, typing indicators, and citations accordions).
+
+---
+
+## 1. Visual & UX Design
+
+We will style the chat window using the exact modern, card-based radial gradient theme and CSS variables (`--accent`, `--panel`, `--text`, `--muted`, `--border`, etc.) already configured in `app.css`.
+
+- **Chat Layout (`.chat-layout`)**: A flexbox column container spanning the full height of the parent `.page-card`.
+- **Message Area (`.chat-messages`)**: A scrollable vertical message viewport with automatic scrolling to the newest message.
+- **Message Bubbles (`.chat-bubble`)**:
+  - **User Message**: Violet/Blue accent background (`var(--accent)`), white text, right-aligned, with professional curved margins.
+  - **Bot Message**: Muted grey panel background (`var(--panel-muted)`), dark text, left-aligned.
+  - **Typing Indicator**: A pulse-based bot bubble showing "Thinking..." when the fetch request is active.
+- **Citations Drawer (`.citations-accordion`)**:
+  - Rendered inline below the Bot's answer bubble.
+  - Styled as a clean CSS `<details>` toggle.
+  - Expanding the toggle exposes a clean grid of citation cards showing:
+    - Clickable paper Title (linked to `https://arxiv.org/abs/{arxivId}` opening in a new tab).
+    - Compact author badges.
+    - Badges for arXiv IDs.
+
+---
+
+## 2. Dynamic Injection & Routing (`app.js`)
+
+We will hook into the existing Single Page Application (SPA) router:
+
+1. **Add Route Handler**:
+   Update `renderPage()` to identify when the current hash is `#/chat`:
+   ```javascript
+   if (page.id === "chat") {
+       renderChatPage(page);
+       return;
+   }
+   ```
+2. **Implement `renderChatPage(page)`**:
+   - Return a clean HTML layout containing:
+     - The scrollable `.chat-messages` container.
+     - The `.chat-input-area` form with a text `<input id="chat-input" placeholder="Ask about academic paper topics...">` and a send button.
+   - Maintain a local reactive array `let chatHistory = []` holding message objects:
+     `{ sender: 'user'|'bot', text: '...', citations: [...], isTyping: boolean }`
+   - Dynamically re-render bubbles from `chatHistory` on every submit or API return.
+3. **API Integration**:
+   - Intercept form submit.
+   - Extract and trim text. If empty, return.
+   - Add user bubble, append "Thinking..." bubble, and render.
+   - Execute an asynchronous `POST /api/chat` with JSON body: `{ message: query, topK: 5 }`.
+   - On success: Parse JSON response and replace "Thinking..." bubble with the raw text and resolved `citations` array.
+   - On failure: Output a clean, styled red error bubble explaining the backend state.
+   - Scroll `.chat-messages` immediately to the bottom using `chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight`.
+
+---
+
+## 3. CSS Style Additions (`app.css`)
+
+We will append the following responsive classes to `app.css`:
+
+```css
+/* Conversational RAG Chat UI */
+.chat-layout {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 12rem);
+    min-height: 25rem;
+}
+
+.chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.4);
+    margin-bottom: 1rem;
+}
+
+.chat-bubble-wrapper {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+}
+
+.chat-bubble-wrapper.user {
+    align-self: flex-end;
+}
+
+.chat-bubble-wrapper.bot {
+    align-self: flex-start;
+}
+
+.chat-bubble {
+    padding: 0.8rem 1.1rem;
+    border-radius: 1.1rem;
+    line-height: 1.55;
+    font-size: 0.96rem;
+    white-space: pre-wrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.chat-bubble-wrapper.user .chat-bubble {
+    background: var(--accent);
+    color: #ffffff;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.chat-bubble-wrapper.bot .chat-bubble {
+    background: var(--panel-muted);
+    color: var(--text);
+    border-bottom-left-radius: 0.25rem;
+    border: 1px solid var(--border);
+}
+
+.chat-bubble.typing {
+    color: var(--muted);
+    font-style: italic;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
+.chat-input-area {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.chat-input {
+    flex-grow: 1;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.8rem;
+    font: inherit;
+    font-size: 0.98rem;
+    color: var(--text);
+    background: var(--panel);
+}
+
+.chat-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* Citations Accordion */
+.citations-accordion {
+    margin-top: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 0.8rem;
+    background: var(--panel);
+    overflow: hidden;
+}
+
+.citations-accordion summary {
+    padding: 0.6rem 0.9rem;
+    font-weight: 750;
+    font-size: 0.88rem;
+    color: var(--accent-strong);
+    cursor: pointer;
+    user-select: none;
+}
+
+.citations-accordion summary:hover {
+    background: var(--panel-muted);
+}
+
+.citations-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.8rem;
+    border-top: 1px solid var(--border);
+    background: rgba(245, 247, 251, 0.3);
+}
+
+.citation-card {
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    background: var(--panel);
+}
+
+.citation-card a {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.92rem;
+}
+
+.citation-card a:hover {
+    text-decoration: underline;
+}
+
+.citation-meta {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+```
+
+---
+
+## 4. Verification & Testing
+1. **Interactive Chat Session**: Navigate to `http://localhost:8081/#/chat`. Ask a question, and confirm that the loading pulse and successful responses render properly.
+2. **Citations Click-Through**: Click on any citation card and ensure it redirects to the correct external arXiv abstract site in a new browser tab.
+3. **Empty/Outage Handling**: Block the backend database/server, enter a chat, and ensure a clean, red-styled error bubble explains the connection state safely.
+# Historical / Experimental UI Plan
+
+This plan assumes `POST /api/chat` already exists. In the current branch it does not, so implement the chat API before wiring this UI.

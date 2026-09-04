@@ -1,0 +1,59 @@
+# Step 4 Implementation Plan: Hybrid Filters & LLM Router Agent
+
+## Background & Motivation
+In Step 3, we successfully implemented a "Pure Semantic" RAG chat loop. However, real-world scientific inquiries often require structural constraints (e.g., "papers about transformers *in category cs.CV* *published after 2023*"). Roadmap Step 4 upgrades our retrieval system to handle these **Hybrid queries** (Semantic + Structured SQL filters) and introduces the **LLM Router/Agent Pattern**. By equipping the LLM with Spring AI Function Calling, the model acts as an autonomous agent, intelligently routing user queries to the appropriate database retrieval tool (pure metadata, pure semantic, or hybrid).
+
+## Scope & Impact
+- **Modules Affected**: `com.example.arxivrag.vector`, `com.example.arxivrag.chat` (and introducing an `agent` or `tools` sub-package).
+- **Core Technologies**: Spring AI `Filter.Expression` DSL, Spring AI `@Bean` `@Description` Function Calling API.
+
+## Proposed Architecture
+- **Hybrid Filtering**: We will expand `VectorSearchRequest` to accept Spring AI's `Filter.Expression`. Our `PgVectorStoreGateway` will pass this expression into the underlying Spring AI `PgVectorStore`, which natively translates it to highly optimized PostgreSQL `JSONB` SQL conditions (leveraging our existing GIN index on `metadata`).
+- **Tool / Function Calling (Agent Pattern)**: 
+  - We will define Spring `@Bean` functions implementing `java.util.function.Function`.
+  - Tools will include:
+    1. `SemanticSearchTool`: Performs pure vector cosine distance search.
+    2. `HybridSearchTool`: Performs vector search constrained by metadata filters (categories, date boundaries).
+  - The `RagChatService` (or a new `AgentChatService`) will invoke the `ChatModel` with these functions registered. The LLM will evaluate the user's prompt, autonomously call the required function(s), receive the database results, and compile the final grounded answer.
+
+---
+
+## Implementation Steps
+
+### 1. Vector Gateway Expansion (`com.example.arxivrag.vector`)
+- Modify `VectorSearchRequest` to accept an optional `org.springframework.ai.document.filter.Filter.Expression`.
+- Update `PgVectorStoreGateway` to map this `Filter.Expression` into the `SearchRequest.builder().filter(...)` call when delegating to Spring AI's `VectorStore`.
+
+### 2. Spring AI Function Definitions (`com.example.arxivrag.chat.tools`)
+Implement the callable tools for the LLM:
+- **`SemanticSearchTool`**: A `Function<SemanticSearchRequest, List<CitationContext>>`. 
+  - *Description*: "Searches for academic papers by semantic meaning. Use this when the user asks about concepts, topics, or ideas."
+- **`HybridSearchTool`**: A `Function<HybridSearchRequest, List<CitationContext>>`.
+  - *Description*: "Searches for papers by semantic meaning AND applies structured filters like category or year. Use this when the user limits the search to a specific domain or date."
+- Register these tools as Spring `@Bean`s.
+
+### 3. Agentic RAG Pipeline (`AgentChatService`)
+- Create a new `AgentChatService` (or enhance `RagChatService`) that invokes the `ChatModel` with `ChatOptionsBuilder.builder().withFunctionCallbacks(...)`.
+- The service acts as the outer loop: passing the user's raw prompt directly to the LLM, allowing the LLM to trigger the tools, and returning the final grounded text.
+- **Citation parsing**: Retain the `[1]` bracket parsing logic by ensuring the functions return formatted strings or contexts that the LLM can easily enumerate.
+
+### 4. REST Controller & CLI Updates
+- Expand `ChatController` to support routing to the Agentic pipeline (e.g., via a flag in `ChatRequest` like `useAgent=true`, or a dedicated endpoint `/api/agent-chat`).
+- Add a new CLI command `agent-chat "<query>"` to test the LLM's autonomous tool-selection from the terminal.
+
+### 5. Offline Mock Compatibility
+- Update `SimpleChatModel` to simulate a tool call. If the system prompt or user prompt contains specific keywords, it can mock a function call execution to ensure offline testing of the Agentic flow remains possible, though true autonomous routing requires the real OpenAI/Azure API.
+
+---
+
+## Verification & Testing
+1. **Unit Tests (`PgVectorStoreGatewayTests`, `ToolTests`)**:
+   - Verify that `Filter.Expression` structures are correctly built and passed.
+   - Verify the custom `Function` beans map input parameters to `VectorSearchRequest` correctly.
+2. **Integration Tests (`AgentChatIntegrationTests`)**:
+   - Verify that enabling function calling correctly routes through the beans using MockMvc.
+3. **Manual CLI Smoke Test (Real LLM required)**:
+   - Temporarily disable the mock (`rag.chat.mock=false`), provide a real API key, and run `agent-chat "Find papers about LLMs in cs.CV published after 2023"`. Monitor the console logs to confirm the LLM successfully identified the parameters, invoked `HybridSearchTool`, and returned a grounded response.
+# Historical / Experimental Plan
+
+This file is a planning note, not the current source of truth. Some implementation claims may describe another branch or a proposed future state. Validate against `src/` and prefer `docs/docs/implementation_steps.txt` for the current ordered plan.
