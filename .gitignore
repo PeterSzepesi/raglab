@@ -24,3 +24,6 @@ Thumbs.db
 
 # Local data
 /data/
+
+# Local Codex/Maven dependency cache
+/.codex-m2/

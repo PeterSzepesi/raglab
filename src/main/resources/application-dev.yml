@@ -16,3 +16,7 @@ rag:
     chat-enabled: false
     vector-stores-enabled: true
     benchmarks-enabled: false
+
+vector:
+  store:
+    type: pgvector

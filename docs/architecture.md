@@ -37,11 +37,16 @@ com.example.arxivrag
 │   ├── Paper
 │   └── PaperRepository
 ├── embedding
+│   ├── RetrievalDocument
+│   ├── RetrievalDocumentFactory
+│   └── RetrievalDocumentController
 └── vector
+    ├── SemanticSearchService
+    ├── VectorSearchCommandLineRunner
     └── pgvector
 ```
 
-The `paper` package now contains the first real domain/persistence slice. The `arxiv`, `embedding`, `vector`, and `vector.pgvector` packages are still boundary placeholders with `package-info.java` files only.
+The `paper`, `arxiv`, `embedding`, and `vector` packages now contain executable slices. Embedding ingestion writes through the selected gateway, and the retrieval-only `search-vector <query>` CLI resolves ranked vector hits back to canonical papers. A semantic search REST API is still planned for Step 7.
 
 ## Target Modular Boundaries
 
@@ -87,12 +92,14 @@ Planned responsibilities:
 - stable content hashing
 - batch embedding workflow
 - checkpoint persistence
+- Microsoft AI Foundry embedding adapter
 - deterministic offline embedding profile
 
 Rules:
 - Checkpoint by `(paper_id, chunk_id, embedding_model, content_hash)`.
 - Re-running embedding ingestion should skip unchanged papers.
 - Live provider failures must not corrupt already-committed batches.
+- The local application sends text to the configured AI Foundry embedding deployment and stores returned vectors locally.
 
 ### `vector`
 
@@ -108,6 +115,22 @@ Rules:
 - Application services depend on this package, not on pgvector/Milvus/Chroma clients.
 - Results expose application identifiers and scores, not database-specific row shapes.
 - Search must be testable with a fake/in-memory gateway before external vector stores exist.
+- Retrieval tools call this boundary locally; the remote chat model receives bounded tool results, not database connections.
+
+### `ai`
+
+Owns model-provider and tool-calling integration.
+
+Planned responsibilities:
+- AI Foundry chat model client through the current provider HTTP adapter; Spring AI orchestration is planned for the tool-calling step
+- AI Foundry embedding model client through the current provider HTTP adapter
+- tool definitions for semantic search, relational search, and paper lookup
+- validation and orchestration of model-requested tool calls
+
+Rules:
+- AI Foundry endpoints, deployment names, API versions, and credentials are profile-specific configuration.
+- The model may request a tool, but only the local application executes it.
+- Never expose arbitrary SQL, database credentials, or unrestricted local network access to the model.
 
 ### `vector.pgvector`
 
@@ -131,23 +154,29 @@ arXiv JSONL
 ArxivDatasetReader -> ArxivRecordFilter -> PaperMapper
     |
     v
-PostgreSQL papers table
+Local PostgreSQL papers table <-----------------------------+
     |
     v
-RetrievalDocumentFactory -> EmbeddingModel
+RetrievalDocumentFactory -> AI Foundry embedding deployment
     |
     v
-VectorStoreGateway
+Local VectorStoreGateway
+    |
+    +-- pgvector
+    +-- Milvus
+    +-- Chroma
     |
     v
-Retrieval service -> PaperRepository -> cited context
+Local retrieval tools -> PaperRepository -> cited context
     |
     v
-Chat generation service
+Local Spring Boot API <-> AI Foundry chat deployment
     |
     v
-Grounded answer with citations
+Local web UI answer with citations
 ```
+
+The application and data plane run locally. AI Foundry is the remote model plane. During chat, the model requests a narrow tool, the local application executes the tool against PostgreSQL or the selected local vector store, and the local application sends a bounded result back to the model. The model does not connect directly to the local database.
 
 ## Testability Standard
 
@@ -168,8 +197,10 @@ Every implementation stage must expose a result without depending on later stage
 3. Add streaming arXiv importer with a tiny fixture.
 4. Add retrieval-document formatting and deterministic hashing.
 5. Add offline embedding model and checkpointing.
-6. Add pgvector gateway and semantic search CLI/API.
-7. Add grounded answer generation using mock-first tests.
-8. Add chat UI only after `POST /api/chat` exists.
-9. Add Milvus and Chroma adapters.
-10. Add benchmark harness and comparison write-up.
+6. Add pgvector gateway and semantic search CLI.
+6B. Add AI Foundry chat and embedding adapters plus local retrieval-tool execution. (Provider adapters implemented; tool execution remains planned.)
+7. Add the semantic search API.
+8. Add grounded answer generation using mock-first tests.
+9. Add chat UI only after `POST /api/chat` exists.
+10. Add Milvus and Chroma adapters.
+11. Add benchmark harness and comparison write-up.

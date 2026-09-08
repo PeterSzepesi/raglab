@@ -21,3 +21,11 @@ arxiv:
   import:
     max-records: 500
     batch-size: 2
+
+embedding:
+  ingestion:
+    batch-size: 2
+
+vector:
+  store:
+    type: in-memory

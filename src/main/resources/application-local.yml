@@ -14,5 +14,9 @@ rag:
     papers-enabled: true
     search-enabled: false
     chat-enabled: false
-    vector-stores-enabled: false
+    vector-stores-enabled: true
     benchmarks-enabled: false
+
+vector:
+  store:
+    type: pgvector

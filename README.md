@@ -129,6 +129,50 @@ Run importer-focused tests without Docker:
 mvnw.cmd "-Dtest=*Arxiv*,PaperMapperTests" test
 ```
 
+For a no-Docker CLI smoke test, use the test classpath so the test-scoped H2 driver is available:
+
+```bat
+mvnw.cmd -q dependency:build-classpath "-Dmdep.outputFile=target/test-classpath.txt" "-Dmdep.scope=test"
+```
+
+```powershell
+$cp = Get-Content target\test-classpath.txt
+java "-Dspring.profiles.active=test" -cp "target/classes;target/test-classes;$cp" com.example.arxivrag.ArxivRagApplication import-arxiv src/test/resources/fixtures/arxiv-tiny.jsonl
+```
+
+## Retrieval document preview
+
+The Search page can generate the exact deterministic title+abstract document used by embedding ingestion. It does not require an LLM or vector database.
+
+Run the app and open `http://localhost:8080/#/search`:
+
+```bat
+mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
+```
+
+API-only preview:
+
+```bat
+curl -X POST http://localhost:8080/api/retrieval-documents/preview -H "Content-Type: application/json" -d "{\"arxivId\":\"2401.00001\",\"title\":\"Retrieval Testing\",\"abstractText\":\"A concise abstract.\"}"
+```
+
+Focused tests:
+
+```bat
+mvnw.cmd "-Dtest=*RetrievalDocument*" test
+```
+
+## Vector ingestion and retrieval-only search
+
+With the local pgvector database running and papers imported, generate and persist vectors:
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=embed-papers"
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=search-vector neural retrieval"
+```
+
+The embedding command uses the configured embedding gateway, writes vectors through `VectorStoreGateway`, and checkpoints successful work. The search command embeds the query with the same model, searches the selected local vector store, and resolves returned paper IDs through PostgreSQL. The default profile remains deterministic and offline; the `foundry` profile calls the configured Microsoft AI Foundry embedding deployment.
+
 The initial UI shell is served by Spring Boot static resources at:
 
 ```text
@@ -156,7 +200,7 @@ com.example.arxivrag
     └── pgvector
 ```
 
-Only package boundaries are created by this bootstrap ticket. Domain classes, repositories, importers, migrations, database infrastructure, and vector-store implementations are intentionally deferred to later tickets.
+The current working tree contains executable paper, arXiv import, embedding checkpoint, vector upsert/search, retrieval-only CLI slices, and profile-scoped AI Foundry chat/embedding provider adapters. The semantic search REST API, tool-calling orchestration, grounded chat, and benchmark code remain future stages.
 
 ## UI shell
 
@@ -181,10 +225,10 @@ The app shell includes navigation and placeholder pages for:
 
 ## Next implementation tickets
 
-1. PostgreSQL/Flyway infrastructure and relational paper schema.
-2. Streaming arXiv dataset reader and importer.
-3. pgvector and embedding ingestion.
-4. Semantic retrieval and paper-ID resolution.
+1. Add Spring AI orchestration and local retrieval-tool execution around the AI Foundry adapters.
+2. Add the semantic search REST API and local retrieval tools.
+3. Add grounded chat with citations.
+4. Add UI wiring, Milvus/Chroma adapters, and benchmark comparison.
 
 ## Continuous integration
 

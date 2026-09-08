@@ -46,7 +46,7 @@ public class ArxivDatasetReader {
                     if (malformedRecordPolicy == ArxivImportProperties.MalformedRecordPolicy.FAIL_FAST) {
                         throw new ArxivImportException("Failed to parse arXiv JSONL record at line " + lineNumber, exception);
                     }
-                    LOGGER.warn("Skipping malformed arXiv JSONL record at line {}", lineNumber, exception);
+                    LOGGER.warn("Skipping malformed arXiv JSONL record at line {}: {}", lineNumber, exception.getMessage());
                 }
             }
         } catch (IOException exception) {

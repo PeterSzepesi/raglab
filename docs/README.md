@@ -18,9 +18,6 @@ This folder contains both the current project contract and older experiment note
 
 ## Important current-state warning
 
-As of this branch, the executable application is a Spring Boot baseline with a static UI shell and two safe runtime endpoints:
+As of this branch, the executable application includes the Spring Boot baseline, PostgreSQL/Flyway paper persistence, streaming arXiv import, retrieval-document formatting, embedding checkpointing, vector upsert/search contracts, the in-memory gateway, and the pgvector adapter.
 
-- `GET /api/health`
-- `GET /api/runtime-config`
-
-The branch does not yet contain database migrations, JPA entities, arXiv importers, embedding ingestion, vector-store adapters, chat generation, or benchmark code. Planning documents must not describe those as implemented until code exists under `src/` and tests verify it.
+Step 6 is complete through the retrieval-only boundary: embedding ingestion now upserts vectors, `search-vector <query>` embeds a query and resolves ranked hits back to canonical paper rows, and pgvector integration coverage is present for Docker-enabled environments. Step 6B adds profile-scoped Microsoft AI Foundry chat/embedding adapters and a direct chat smoke command. Spring AI orchestration, local retrieval tools, semantic search REST API, and grounded chat remain planned next.

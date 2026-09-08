@@ -10,6 +10,8 @@ The practical end deliverable is:
 - grounded citations linked back to canonical paper records;
 - PostgreSQL as the relational source of truth;
 - swappable vector-store adapters for pgvector, Milvus, and Chroma;
+- Microsoft AI Foundry deployments for the chat model and a small embedding model;
+- a locally running application and local corpus, with remote model calls over APIs;
 - benchmark results and an engineering recommendation.
 
 ## Current Starting Point
@@ -31,16 +33,21 @@ Implemented:
 - `Paper` entity and repository;
 - streaming arXiv JSONL reader/filter/mapper/import service;
 - `import-arxiv <file>` CLI command;
+- retrieval-document formatting and SHA-256 content hashing;
+- UI/API retrieval-document preview;
+- offline deterministic embedding generation and resumable checkpoints;
+- store-neutral vector contracts, in-memory search, pgvector persistence, and the `search-vector <query>` CLI;
+- profile-scoped Microsoft AI Foundry chat and embedding adapters with a direct `chat-model` smoke command;
 - Spring Boot tests for the shell and safe runtime endpoints;
 - GitHub Actions and Dependabot.
 
 Not implemented yet:
 
-- embedding generation;
-- vector-store schema or adapters;
-- semantic search;
+- Spring AI orchestration and the Microsoft AI Foundry retrieval-tool loop;
+- semantic search REST API;
 - chat generation;
-- Milvus or Chroma;
+- local semantic and relational retrieval tools;
+- Milvus or Chroma adapters;
 - benchmark harness.
 
 ## Dataset
@@ -69,24 +76,34 @@ PostgreSQL papers table  <----+
     v                         |
 Embedding ingestion            |
     |                         |
+    +-- calls AI Foundry      |
+    |      embedding API      |
     v                         |
-Vector store gateway           |
+Local vector store gateway    |
     |                         |
-    +-- pgvector               |
-    +-- Milvus                 |
-    +-- Chroma                 |
+    +-- pgvector              |
+    +-- Milvus                |
+    +-- Chroma                |
     |                         |
     v                         |
-Retrieval service -------------+
+Local retrieval tools --------+
+    |                         |
+    +-- semantic vector search|
+    +-- relational SQL search |
+    |                         |
+    v                         |
+AI Foundry chat deployment
     |
     v
-Grounded generation
+Grounded generation with local tool results
     |
     v
 Web chat UI with citations
 ```
 
-PostgreSQL remains the canonical source for paper metadata. Vector stores return IDs and scores; the application resolves those IDs through PostgreSQL before generating answers or rendering citations.
+PostgreSQL remains the canonical source for paper metadata. Vector stores return IDs and scores; the local application resolves those IDs through PostgreSQL before generating answers or rendering citations. Microsoft AI Foundry hosts the remote chat and embedding deployments but does not directly access local data stores.
+
+The chat model receives tool definitions from the local application. When it requests semantic search, relational search, or paper lookup, the local application validates and executes the tool against local PostgreSQL or the selected local vector store, then returns bounded results to the model. The model chooses when retrieval is needed; the application owns and performs the retrieval.
 
 ## Why Two Store Types
 
@@ -100,6 +117,8 @@ The project should demonstrate where vector search helps and where it is the wro
 ## Recommended Engineering Strategy
 
 Use pgvector first because it has the lowest operational overhead and makes SQL+vector hybrid retrieval easiest. Do not add Milvus or Chroma until pgvector ingestion and search work end to end.
+
+Run the frontend, Spring Boot API, PostgreSQL database, and selected vector store locally. Call the deployed chat and embedding models in Microsoft AI Foundry through outbound APIs. Keep provider credentials in local profile configuration and never expose them to the frontend or the model.
 
 Keep the first frontend static. A separate frontend build becomes worthwhile only after the chat API has real behavior.
 

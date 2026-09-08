@@ -210,7 +210,8 @@ Standalone tests:
 Validation:
 
 ```powershell
-.\mvnw.cmd -Dtest=*Vector* test
+.\mvnw.cmd -Dtest=InMemoryVectorStoreGatewayTests,SemanticSearchServiceTests test
+.\mvnw.cmd -Ppostgres-it -Dit.test=PgVectorStoreGatewayIT verify
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=search-vector neural retrieval"
 ```
 
@@ -218,6 +219,72 @@ Acceptance criteria:
 
 - Empty vector table returns a clean zero-result response.
 - Search results include enough IDs to resolve paper citations.
+
+Status at the current pause:
+
+- Implemented through the retrieval-only boundary.
+- `EmbeddingIngestionService` writes each new embedding to `VectorStoreGateway` before committing its checkpoint.
+- `SemanticSearchService` embeds a query with the same configured model and resolves vector hits through `PaperRepository`.
+- `search-vector <query>` provides the CLI smoke path and prints ranked canonical paper results.
+- In-memory contract tests and a Docker-backed pgvector integration test cover ordering and empty results.
+- The `local` and `dev` profiles select pgvector; the `test` profile selects the in-memory gateway.
+
+## Step 6B — Connect Microsoft AI Foundry And Local Model Operations
+
+Objective:
+Use Microsoft AI Foundry as the remote model plane while keeping the application, PostgreSQL database, and selected vector store local.
+
+Configured deployment for this environment:
+
+- endpoint: `https://models-for-peter-resource.services.ai.azure.com`
+- API version: `2024-10-21`
+- chat deployment: `gpt-5.6-luna`
+- embedding deployment: `text-embedding-3-large`
+- embedding dimension requested by the application: `1536`
+- region: Sweden Central
+
+Implementation:
+
+- Use the existing AI Foundry resource in Sweden Central at `https://models-for-peter-resource.services.ai.azure.com`.
+- Use API version `2024-10-21`.
+- Call the exact chat deployment `gpt-5.6-luna`.
+- Call the exact embedding deployment `text-embedding-3-large`.
+- Request 1536 embedding dimensions so the remote output matches the existing `vector(1536)` schema. `text-embedding-3-large` supports a reduced dimension request; if this resource rejects it, migrate the vector schema to the returned dimension rather than padding or truncating vectors.
+- Add profile-specific endpoint, deployment-name, API-version, and credential configuration.
+- Add provider adapters for chat and embeddings. The current smoke implementation uses the Azure OpenAI-compatible deployment-based HTTP contract; Spring AI remains the planned orchestration layer for tool calling.
+- Keep the offline deterministic embedding model and mock chat model for tests and no-network runs.
+- Add narrow retrieval tool contracts such as semantic search, relational paper search, and paper lookup.
+- Implement the tool loop in the local application: send the question and tool definitions to AI Foundry, validate a requested tool call, execute it locally, and send a bounded result back to the model.
+
+Important boundary:
+
+The AI Foundry model does not receive PostgreSQL credentials and does not connect directly to the local database. It requests a tool; the local Spring Boot application performs the database or vector-store operation.
+
+Standalone tests:
+
+- model configuration binds without exposing credentials;
+- embedding adapter returns the configured model name and dimension;
+- tool argument validation rejects unknown tools, invalid topK values, and arbitrary SQL;
+- mock model can request semantic and relational tools and receives deterministic results;
+- normal tests do not require network access or AI Foundry credentials.
+
+Validation:
+
+```powershell
+.\mvnw.cmd -Dtest=*Ai*,*Embedding*,*Tool* test
+```
+
+Acceptance criteria:
+
+- The local application can call the deployed AI Foundry embedding model and store returned vectors in the selected local vector store.
+- The local application can call the deployed AI Foundry chat model and complete a validated retrieval-tool round trip.
+- Provider credentials and database credentials remain local configuration and never appear in browser responses or model tool arguments.
+
+Status:
+
+- The profile-specific Foundry endpoint/deployment configuration, embedding adapter, chat adapter, request validation, direct chat smoke command, and 1536-dimensional vector path are implemented.
+- The live smoke test requires a rotated API key supplied through `AZURE_AI_FOUNDRY_API_KEY`.
+- The retrieval-tool loop, REST APIs, and UI wiring remain intentionally outside Step 6B and are covered by Steps 7–9.
 
 ## Step 7 — Add Retrieval API
 
@@ -256,7 +323,8 @@ Implementation:
 
 - `POST /api/chat`
 - retrieval prompt builder
-- chat model abstraction/configuration
+- AI Foundry chat model abstraction/configuration through Spring AI
+- local semantic and relational retrieval tools
 - mock chat model for tests
 - citation object sourced from PostgreSQL
 
@@ -264,6 +332,8 @@ Standalone tests:
 
 - answer contains citations returned by retrieval;
 - prompt excludes papers not retrieved;
+- requested tools are executed locally and only bounded results are returned to the model;
+- arbitrary SQL or unknown tool names are rejected;
 - empty retrieval produces a clear no-evidence answer;
 - live provider is not required for normal tests.
 

@@ -34,6 +34,12 @@ arxiv:
     batch-size: 1000
     malformed-record-policy: warn-and-skip
 
+embedding:
+  ingestion:
+    batch-size: 100
+    model-name: offline-deterministic-1536
+    dimensions: 1536
+
 management:
   endpoints:
     web:

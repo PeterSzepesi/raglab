@@ -1,0 +1,36 @@
+spring:
+  datasource:
+    url: ${RAG_DATABASE_URL:jdbc:postgresql://localhost:5432/arxiv_rag}
+    username: ${RAG_DATABASE_USERNAME:arxiv_rag}
+    password: ${RAG_DATABASE_PASSWORD:arxiv_rag}
+  jpa:
+    show-sql: false
+
+rag:
+  runtime:
+    profile: foundry
+  features:
+    import-enabled: true
+    papers-enabled: true
+    search-enabled: false
+    chat-enabled: false
+    vector-stores-enabled: true
+    benchmarks-enabled: false
+
+foundry:
+  endpoint: ${AZURE_AI_FOUNDRY_ENDPOINT:https://models-for-peter-resource.services.ai.azure.com}
+  api-key: ${AZURE_AI_FOUNDRY_API_KEY:}
+  api-version: ${AZURE_AI_FOUNDRY_API_VERSION:2024-10-21}
+  chat-deployment: ${AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT:gpt-5.6-luna}
+  embedding-deployment: ${AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT:text-embedding-3-large}
+  request-timeout: ${AZURE_AI_FOUNDRY_REQUEST_TIMEOUT:120s}
+
+embedding:
+  ingestion:
+    batch-size: ${FOUNDRY_EMBEDDING_BATCH_SIZE:20}
+    model-name: ${AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT:text-embedding-3-large}
+    dimensions: ${FOUNDRY_EMBEDDING_DIMENSIONS:1536}
+
+vector:
+  store:
+    type: pgvector

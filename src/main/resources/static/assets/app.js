@@ -75,6 +75,8 @@ let backendHealth = {
     message: "Checking backend health...",
     checkedAt: null
 };
+let embeddingStatus = null;
+let embeddingStatusError = null;
 
 function escapeHtml(value) {
     return String(value)
@@ -124,6 +126,16 @@ function renderPage() {
 
     if (page.id === "system-status") {
         renderSystemStatusPage(page);
+        return;
+    }
+
+    if (page.id === "search") {
+        renderRetrievalPreviewPage(page);
+        return;
+    }
+
+    if (page.id === "vector-stores") {
+        renderEmbeddingStatusPage(page);
         return;
     }
 
@@ -238,6 +250,144 @@ function renderSettingsPage(page) {
     `;
 }
 
+function renderEmbeddingStatusPage(page) {
+    const statusMarkup = embeddingStatus
+        ? `
+            <div class="metric-grid">
+                <div class="metric">
+                    <strong>${escapeHtml(embeddingStatus.papers)}</strong>
+                    <span>Papers</span>
+                </div>
+                <div class="metric">
+                    <strong>${escapeHtml(embeddingStatus.checkpointedPapers)}</strong>
+                    <span>Checkpointed papers</span>
+                </div>
+                <div class="metric">
+                    <strong>${escapeHtml(embeddingStatus.checkpoints)}</strong>
+                    <span>Total checkpoints</span>
+                </div>
+                <div class="metric">
+                    <strong>${escapeHtml(embeddingStatus.coveragePercent.toFixed(1))}%</strong>
+                    <span>Coverage</span>
+                </div>
+            </div>
+            <div class="config-grid">
+                <div class="config-item">
+                    <span>Embedding model</span>
+                    <strong>${escapeHtml(embeddingStatus.embeddingModel)}</strong>
+                </div>
+                <div class="config-item">
+                    <span>Embedding dimension</span>
+                    <strong>${escapeHtml(embeddingStatus.embeddingDimension)}</strong>
+                </div>
+            </div>
+        `
+        : `<p class="placeholder-copy">${embeddingStatusError ?? "Loading embedding checkpoint status..."}</p>`;
+
+    pageContent.innerHTML = `
+        <div class="hero-grid">
+            <div>
+                <h2>${page.title}</h2>
+                <p class="placeholder-copy">Embedding checkpointing and vector persistence are active. Run <code>embed-papers</code> with the local profile to upsert vectors into pgvector, then use <code>search-vector &lt;query&gt;</code> for retrieval-only smoke testing.</p>
+                <div class="health-panel ${embeddingStatusError ? "error" : ""}">
+                    <div>
+                        <span class="status-badge ${embeddingStatusError ? "error" : "ok"}">${embeddingStatusError ? "Unavailable" : "Checkpointing"}</span>
+                        <h3>Embedding ingestion status</h3>
+                        <p>${embeddingStatusError ? escapeHtml(embeddingStatusError) : "Offline deterministic embeddings can be checkpointed locally without provider keys."}</p>
+                    </div>
+                    <button class="primary-button" type="button" data-embedding-status-refresh>Refresh</button>
+                </div>
+            </div>
+            <aside>
+                ${statusMarkup}
+            </aside>
+        </div>
+    `;
+}
+
+function renderRetrievalPreviewPage(page) {
+    pageContent.innerHTML = `
+        <div class="preview-layout">
+            <div>
+                <h2>${page.title}</h2>
+                <p class="placeholder-copy">Build the exact title+abstract retrieval document used by embedding ingestion. This preview is deterministic and does not call an LLM or vector database.</p>
+                <form class="preview-form" data-retrieval-preview-form>
+                    <label>
+                        arXiv ID
+                        <input name="arxivId" type="text" value="2401.00001" required>
+                    </label>
+                    <label>
+                        Title
+                        <input name="title" type="text" value="Retrieval Testing" required>
+                    </label>
+                    <label>
+                        Abstract
+                        <textarea name="abstractText" rows="8" required>A concise abstract for repository testing.</textarea>
+                    </label>
+                    <button class="primary-button" type="submit">Generate Retrieval Document</button>
+                </form>
+            </div>
+            <aside class="preview-result" id="retrieval-preview-result">
+                <span class="status-badge">Ready</span>
+                <p class="placeholder-copy">Submit the form to see the generated chunk ID, SHA-256 content hash, and embedding text.</p>
+            </aside>
+        </div>
+    `;
+}
+
+async function submitRetrievalPreview(form) {
+    const result = document.querySelector("#retrieval-preview-result");
+    const formData = new FormData(form);
+
+    result.innerHTML = `
+        <span class="status-badge">Working</span>
+        <p class="placeholder-copy">Generating deterministic retrieval document...</p>
+    `;
+
+    try {
+        const response = await fetch("/api/retrieval-documents/preview", {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                arxivId: formData.get("arxivId"),
+                title: formData.get("title"),
+                abstractText: formData.get("abstractText")
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Preview endpoint returned ${response.status}`);
+        }
+
+        const documentPreview = await response.json();
+        result.innerHTML = `
+            <span class="status-badge ok">Generated</span>
+            <div class="config-grid">
+                <div class="config-item">
+                    <span>Chunk ID</span>
+                    <strong>${escapeHtml(documentPreview.chunkId)}</strong>
+                </div>
+                <div class="config-item">
+                    <span>Content hash</span>
+                    <strong class="hash-value">${escapeHtml(documentPreview.contentHash)}</strong>
+                </div>
+            </div>
+            <h3>Embedding text</h3>
+            <pre class="document-preview">${escapeHtml(documentPreview.text)}</pre>
+        `;
+        clearGlobalError();
+    } catch {
+        result.innerHTML = `
+            <span class="status-badge error">Failed</span>
+            <p class="placeholder-copy">The preview endpoint is unavailable or rejected the request.</p>
+        `;
+        showGlobalError("Retrieval document preview failed. Check backend health and required form values.");
+    }
+}
+
 async function refreshBackendStatus() {
     backendHealth = {
         status: "checking",
@@ -301,6 +451,25 @@ async function refreshRuntimeConfig() {
     }
 }
 
+async function refreshEmbeddingStatus() {
+    try {
+        const response = await fetch("/api/embeddings/status", {headers: {"Accept": "application/json"}});
+        if (!response.ok) {
+            throw new Error(`Embedding status endpoint returned ${response.status}`);
+        }
+
+        embeddingStatus = await response.json();
+        embeddingStatusError = null;
+    } catch {
+        embeddingStatus = null;
+        embeddingStatusError = "Embedding checkpoint status is unavailable. Check backend health and database configuration.";
+    }
+
+    if ((window.location.hash.replace("#/", "") || "system-status") === "vector-stores") {
+        renderPage();
+    }
+}
+
 window.addEventListener("hashchange", renderPage);
 window.addEventListener("error", () => {
     showGlobalError("Something went wrong in the demo UI. Refresh the page or retry the last action.");
@@ -311,13 +480,24 @@ window.addEventListener("unhandledrejection", () => {
 healthRefreshButton.addEventListener("click", () => {
     refreshBackendStatus();
     refreshRuntimeConfig();
+    refreshEmbeddingStatus();
 });
 pageContent.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-health-refresh]")) {
         refreshBackendStatus();
         refreshRuntimeConfig();
     }
+    if (event.target instanceof Element && event.target.matches("[data-embedding-status-refresh]")) {
+        refreshEmbeddingStatus();
+    }
+});
+pageContent.addEventListener("submit", (event) => {
+    if (event.target instanceof HTMLFormElement && event.target.matches("[data-retrieval-preview-form]")) {
+        event.preventDefault();
+        submitRetrievalPreview(event.target);
+    }
 });
 renderPage();
 refreshBackendStatus();
 refreshRuntimeConfig();
+refreshEmbeddingStatus();
