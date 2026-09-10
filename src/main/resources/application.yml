@@ -39,6 +39,7 @@ embedding:
     batch-size: 100
     model-name: offline-deterministic-1536
     dimensions: 1536
+    progress-log-interval: 10
 
 management:
   endpoints:

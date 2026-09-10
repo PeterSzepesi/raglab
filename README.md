@@ -228,7 +228,7 @@ The app shell includes navigation and placeholder pages for:
 1. Add Spring AI orchestration and local retrieval-tool execution around the AI Foundry adapters.
 2. Add the semantic search REST API and local retrieval tools.
 3. Add grounded chat with citations.
-4. Add UI wiring, Milvus/Chroma adapters, and benchmark comparison.
+4. Add Milvus/Chroma adapters and benchmark comparison.
 
 ## Continuous integration
 

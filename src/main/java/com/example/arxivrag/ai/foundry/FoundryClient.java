@@ -1,6 +1,7 @@
 package com.example.arxivrag.ai.foundry;
 
 import org.springframework.context.annotation.Profile;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -14,6 +15,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,6 +31,7 @@ public class FoundryClient {
 
     private final HttpClient httpClient;
 
+    @Autowired
     public FoundryClient(FoundryProperties properties, ObjectMapper objectMapper) {
         this(properties, objectMapper, HttpClient.newBuilder()
                 .connectTimeout(timeout(properties.getRequestTimeout()))
@@ -65,22 +70,85 @@ public class FoundryClient {
     }
 
     public String chat(String deployment, String systemPrompt, String userMessage) {
-        var messages = new ArrayList<Map<String, String>>();
+        var messages = new ArrayList<Map<String, Object>>();
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             messages.add(Map.of("role", "system", "content", systemPrompt));
         }
         messages.add(Map.of("role", "user", "content", userMessage));
 
-        var body = writeJson(Map.of(
-                "model", deployment,
-                "messages", messages
-        ));
-        var response = post("/openai/deployments/" + encode(deployment) + "/chat/completions", body);
-        var content = response.path("choices").path(0).path("message").path("content").asText(null);
-        if (content == null || content.isBlank()) {
+        var result = chatWithTools(deployment, new ArrayList<>(messages), List.of());
+        if (result.content() == null || result.content().isBlank()) {
             throw new FoundryProviderException("Foundry chat response did not contain message content");
         }
-        return content;
+        return result.content();
+    }
+
+    public FoundryChatResult chatWithTools(
+            String deployment,
+            List<Map<String, Object>> messages,
+            List<Map<String, Object>> tools
+    ) {
+        if (deployment == null || deployment.isBlank()) {
+            throw new FoundryProviderException("Foundry chat deployment must not be blank");
+        }
+        if (messages == null || messages.isEmpty()) {
+            throw new FoundryProviderException("Foundry chat requires at least one message");
+        }
+
+        var payload = new HashMap<String, Object>();
+        payload.put("model", deployment);
+        payload.put("messages", messages);
+        if (tools != null && !tools.isEmpty()) {
+            payload.put("tools", tools);
+            payload.put("tool_choice", "auto");
+        }
+
+        var response = post("/openai/deployments/" + encode(deployment) + "/chat/completions", writeJson(payload));
+        var message = response.path("choices").path(0).path("message");
+        if (!message.isObject()) {
+            throw new FoundryProviderException("Foundry chat response did not contain an assistant message");
+        }
+
+        var toolCalls = new ArrayList<FoundryToolCall>();
+        var toolCallNodes = message.path("tool_calls");
+        if (toolCallNodes.isArray()) {
+            for (var toolCallNode : toolCallNodes) {
+                var id = toolCallNode.path("id").asText(null);
+                var function = toolCallNode.path("function");
+                var name = function.path("name").asText(null);
+                var arguments = function.path("arguments").asText(null);
+                if (id == null || id.isBlank() || name == null || name.isBlank() || arguments == null) {
+                    throw new FoundryProviderException("Foundry returned an invalid tool call");
+                }
+                toolCalls.add(new FoundryToolCall(id, name, parseArguments(arguments)));
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        var assistantMessage = (Map<String, Object>) objectMapper.convertValue(message, Map.class);
+        var content = message.path("content").asText(null);
+        if ((content == null || content.isBlank()) && toolCalls.isEmpty()) {
+            throw new FoundryProviderException("Foundry chat response contained neither content nor tool calls");
+        }
+        return new FoundryChatResult(content, List.copyOf(toolCalls),
+                Collections.unmodifiableMap(new LinkedHashMap<>(assistantMessage)));
+    }
+
+    private Map<String, Object> parseArguments(String arguments) {
+        try {
+            var node = objectMapper.readTree(arguments);
+            if (!node.isObject()) {
+                throw new FoundryProviderException("Foundry tool arguments must be a JSON object");
+            }
+            @SuppressWarnings("unchecked")
+            var values = (Map<String, Object>) objectMapper.convertValue(node, Map.class);
+            return Collections.unmodifiableMap(new LinkedHashMap<>(values));
+        } catch (RuntimeException exception) {
+            if (exception instanceof FoundryProviderException providerException) {
+                throw providerException;
+            }
+            throw new FoundryProviderException("Foundry returned invalid tool arguments", exception);
+        }
     }
 
     private JsonNode post(String path, String body) {
@@ -159,5 +227,15 @@ public class FoundryClient {
         public FoundryProviderException(String message, Throwable cause) {
             super(message, cause);
         }
+    }
+
+    public record FoundryToolCall(String id, String name, Map<String, Object> arguments) {
+    }
+
+    public record FoundryChatResult(
+            String content,
+            List<FoundryToolCall> toolCalls,
+            Map<String, Object> assistantMessage
+    ) {
     }
 }

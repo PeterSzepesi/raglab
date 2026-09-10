@@ -1,5 +1,6 @@
 package com.example.arxivrag.embedding;
 
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -9,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Component
+@Profile("!foundry")
 public class OfflineDeterministicEmbeddingModel implements EmbeddingModelGateway {
 
     private final EmbeddingIngestionProperties properties;

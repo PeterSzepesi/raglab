@@ -314,6 +314,12 @@ Acceptance criteria:
 
 - The frontend can show useful search results before LLM chat exists.
 
+Status:
+
+- Implemented as `SearchController` at `POST /api/search`.
+- Supports bounded `topK` from 1–50 plus optional exact category and inclusive date filters.
+- Filtered searches over-fetch vector candidates before applying metadata filters and returning the requested number of results.
+
 ## Step 8 — Add Grounded Chat API
 
 Objective:
@@ -323,7 +329,7 @@ Implementation:
 
 - `POST /api/chat`
 - retrieval prompt builder
-- AI Foundry chat model abstraction/configuration through Spring AI
+- AI Foundry chat model abstraction through the existing provider client; Spring AI can replace this boundary later without changing the API contract
 - local semantic and relational retrieval tools
 - mock chat model for tests
 - citation object sourced from PostgreSQL
@@ -346,7 +352,14 @@ Validation:
 Acceptance criteria:
 
 - Every non-empty answer includes citation metadata.
-- The API can run in a mock/offline profile.
+- The API returns bounded local evidence and tool names used for transparency.
+
+Status:
+
+- Implemented as `GroundedChatService` and `ChatController` at `POST /api/chat` for the `foundry` profile.
+- The model can request only `semantic_search`, `relational_paper_search`, or `paper_lookup`.
+- The local application validates tool names, arguments, dates, and topK, executes PostgreSQL/vector operations, and sends bounded JSON evidence back to Foundry.
+- The loop is capped at three tool rounds. Provider calls remain outside normal offline tests.
 
 ## Step 9 — Upgrade The Static UI
 
@@ -382,6 +395,11 @@ http://localhost:8080/#/chat
 Acceptance criteria:
 
 - UI does not require Node, npm, or a separate build.
+
+Status:
+
+- Implemented in the existing static UI. Search calls `POST /api/search`; Chat calls `POST /api/chat` and renders answers, citations, and tool traces.
+- Run the `foundry` profile after importing and embedding a small corpus to test the complete local-browser-to-Foundry path.
 
 ## Step 10 — Add Milvus And Chroma
 

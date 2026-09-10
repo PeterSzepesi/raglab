@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - arxiv-rag-postgres-data:/var/lib/postgresql/data
+      - arxiv-rag-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U arxiv_rag -d arxiv_rag"]
       interval: 10s

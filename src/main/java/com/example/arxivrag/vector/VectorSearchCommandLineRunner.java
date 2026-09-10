@@ -6,7 +6,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
 
 @Component
 public class VectorSearchCommandLineRunner implements ApplicationRunner {
@@ -25,17 +24,17 @@ public class VectorSearchCommandLineRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        var sourceArgs = args.getSourceArgs();
-        if (sourceArgs.length == 0 || !"search-vector".equals(sourceArgs[0])) {
+        var commandArgs = args.getNonOptionArgs();
+        if (commandArgs.isEmpty() || !"search-vector".equals(commandArgs.get(0))) {
             return;
         }
 
-        if (sourceArgs.length < 2) {
+        if (commandArgs.size() < 2) {
             System.err.println("Usage: search-vector <query>");
             System.exit(SpringApplication.exit(applicationContext, () -> 2));
         }
 
-        var query = String.join(" ", Arrays.copyOfRange(sourceArgs, 1, sourceArgs.length));
+        var query = String.join(" ", commandArgs.subList(1, commandArgs.size()));
         try {
             var results = semanticSearchService.search(query);
             System.out.printf("Semantic search complete%n%nQuery: %s%nEmbedding model: %s%nResults: %d%n%n",

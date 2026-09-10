@@ -38,12 +38,14 @@ Implemented:
 - offline deterministic embedding generation and resumable checkpoints;
 - store-neutral vector contracts, in-memory search, pgvector persistence, and the `search-vector <query>` CLI;
 - profile-scoped Microsoft AI Foundry chat and embedding adapters with a direct `chat-model` smoke command;
+- semantic search and grounded chat APIs with validated local retrieval tools;
+- static UI integration for search and Foundry-grounded chat with citations;
 - Spring Boot tests for the shell and safe runtime endpoints;
 - GitHub Actions and Dependabot.
 
 Not implemented yet:
 
-- Spring AI orchestration and the Microsoft AI Foundry retrieval-tool loop;
+- Spring AI replacement/refinement of the current direct tool-loop adapter;
 - semantic search REST API;
 - chat generation;
 - local semantic and relational retrieval tools;

@@ -7,6 +7,8 @@ import tools.jackson.databind.ObjectMapper;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,6 +50,25 @@ class FoundryClientHttpTests {
         assertThat(requestFrom(httpClient).uri()).hasToString(
                 "https://models-for-peter-resource.services.ai.azure.com/openai/deployments/"
                         + "gpt-5.6-luna/chat/completions?api-version=2024-10-21");
+    }
+
+    @Test
+    void parsesToolCallsAndKeepsAssistantMessageForTheFollowUpRequest() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        doReturn(response(200, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"semantic_search\",\"arguments\":\"{\\\"query\\\":\\\"neural retrieval\\\",\\\"topK\\\":5}\"}}]}}]}")
+        ).when(httpClient).send(any(HttpRequest.class), any());
+
+        var result = new FoundryClient(properties(), new ObjectMapper(), httpClient)
+                .chatWithTools("gpt-5.6-luna", List.of(Map.of("role", "user", "content", "question")), List.of(Map.of("type", "function")));
+
+        assertThat(result.content()).isNull();
+        assertThat(result.toolCalls()).singleElement().satisfies(call -> {
+            assertThat(call.id()).isEqualTo("call-1");
+            assertThat(call.name()).isEqualTo("semantic_search");
+            assertThat(call.arguments()).containsEntry("query", "neural retrieval");
+            assertThat(call.arguments()).containsEntry("topK", 5);
+        });
+        assertThat(result.assistantMessage()).containsEntry("role", "assistant");
     }
 
     @Test

@@ -11,6 +11,8 @@ public class EmbeddingIngestionProperties {
 
     private int dimensions = 1536;
 
+    private int progressLogInterval = 10;
+
     public int getBatchSize() {
         return batchSize;
     }
@@ -33,5 +35,13 @@ public class EmbeddingIngestionProperties {
 
     public void setDimensions(int dimensions) {
         this.dimensions = dimensions;
+    }
+
+    public int getProgressLogInterval() {
+        return progressLogInterval;
+    }
+
+    public void setProgressLogInterval(int progressLogInterval) {
+        this.progressLogInterval = progressLogInterval;
     }
 }

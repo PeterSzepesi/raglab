@@ -4,7 +4,7 @@
 
 `arxiv-rag` is a Java/Spring learning project for building a Retrieval-Augmented Generation system over arXiv paper metadata and abstracts. The intended architecture combines PostgreSQL for canonical structured metadata with swappable local vector stores for semantic retrieval and Microsoft AI Foundry for remote chat and embedding model deployments.
 
-The current branch is intentionally small. It provides a tested Spring Boot baseline, static UI shell, resumable embedding ingestion, a retrieval-only vector search path, and the first Microsoft AI Foundry provider adapters. The user-facing search API, retrieval tools, and grounded chat loop are still planned.
+The current branch provides a tested Spring Boot baseline, resumable embedding ingestion, a retrieval-only vector search path, Microsoft AI Foundry provider adapters, validated retrieval tools, search/chat APIs, and a static UI that exercises the Foundry-grounded chat path.
 
 ## Current Executable State
 
@@ -28,16 +28,17 @@ Implemented:
 - offline deterministic embedding generation with checkpointing;
 - store-neutral vector contracts, in-memory search, pgvector persistence, and the `search-vector <query>` CLI;
 - profile-scoped Microsoft AI Foundry chat/embedding HTTP adapters and the `chat-model <question>` smoke command;
+- `POST /api/search` with semantic search and category/date filters;
+- `POST /api/chat` with bounded Foundry tool calling, local semantic/relational retrieval, and citations;
+- static Search and Chat pages wired to the backend;
 - JUnit/Spring Boot tests;
 - GitHub Actions CI;
 - Dependabot.
 
 Not implemented yet:
 
-- Spring AI orchestration and Microsoft AI Foundry retrieval-tool loop;
+- Spring AI replacement of the current direct tool-loop adapter;
 - Milvus/Chroma adapters;
-- semantic search API;
-- chat API;
 - benchmark runner.
 
 ## Build And Test
@@ -153,6 +154,26 @@ POST {endpoint}/openai/deployments/{deployment}/embeddings?api-version=2024-10-2
 ```
 
 The deployment name is included both in the route and as the request body's `model` value, matching the supplied Foundry deployment names. If the Code tab for this specific resource gives an `/openai/v1/` request instead, treat that generated request as authoritative and update the route style before the live smoke test; do not silently retry both routes.
+
+### Start the browser-testable application
+
+After import and embedding succeed, keep PostgreSQL running and start the backend without a terminating CLI argument:
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=foundry"
+```
+
+Open `http://localhost:8080/#/chat`. Type a question about the imported corpus. The request sequence is:
+
+```text
+Browser -> POST /api/chat -> local Spring Boot
+        -> Foundry chat deployment
+        -> local retrieval tool (pgvector/PostgreSQL)
+        -> Foundry chat deployment with bounded evidence
+        -> browser with answer, citations, and tool trace
+```
+
+The browser never sees the Foundry API key. If the chat page reports no evidence, first check that the import command created papers and that `embed-papers` completed with the `foundry` profile. If the provider returns an authentication or route error, check the rotated key and the exact request shown by the Foundry Code tab.
 
 ## Historical Optional Model Hosting With Visual Studio Enterprise
 
@@ -319,7 +340,8 @@ Use the existing packages deliberately:
 - `embedding` — retrieval-document formatting, content hashing, and embedding ingestion.
 - `vector` — store-neutral contracts and application-facing search types.
 - `vector.pgvector` — pgvector-specific adapter details.
-- `ai` — provider-neutral generation boundary and provider-specific model clients.
+- `search` — semantic search request/response API.
+- `ai` — provider-neutral generation boundary, retrieval tools, grounded chat, and provider-specific model clients.
 - `ai.foundry` — Microsoft AI Foundry HTTP client and deployment-specific model adapters.
 
 Rules:

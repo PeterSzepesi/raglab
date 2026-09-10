@@ -7,7 +7,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
 
 @Component
 @Profile("foundry")
@@ -24,16 +23,16 @@ public class FoundryChatCommandLineRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        var sourceArgs = args.getSourceArgs();
-        if (sourceArgs.length == 0 || !"chat-model".equals(sourceArgs[0])) {
+        var commandArgs = args.getNonOptionArgs();
+        if (commandArgs.isEmpty() || !"chat-model".equals(commandArgs.get(0))) {
             return;
         }
-        if (sourceArgs.length < 2) {
+        if (commandArgs.size() < 2) {
             System.err.println("Usage: chat-model <question>");
             System.exit(SpringApplication.exit(applicationContext, () -> 2));
         }
 
-        var question = String.join(" ", Arrays.copyOfRange(sourceArgs, 1, sourceArgs.length));
+        var question = String.join(" ", commandArgs.subList(1, commandArgs.size()));
         try {
             var answer = chatGateway.generate(
                     "You are a concise assistant. This is a connectivity smoke test; do not claim to have searched the paper database.",

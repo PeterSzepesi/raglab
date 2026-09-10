@@ -12,8 +12,8 @@ rag:
   features:
     import-enabled: true
     papers-enabled: true
-    search-enabled: false
-    chat-enabled: false
+    search-enabled: true
+    chat-enabled: true
     vector-stores-enabled: true
     benchmarks-enabled: false
 
@@ -30,6 +30,7 @@ embedding:
     batch-size: ${FOUNDRY_EMBEDDING_BATCH_SIZE:20}
     model-name: ${AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT:text-embedding-3-large}
     dimensions: ${FOUNDRY_EMBEDDING_DIMENSIONS:1536}
+    progress-log-interval: ${FOUNDRY_EMBEDDING_PROGRESS_LOG_INTERVAL:10}
 
 vector:
   store:

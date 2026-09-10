@@ -7,8 +7,8 @@ const pages = [
         details: ["Backend health probe", "Application identity", "Future database/vector-store status"],
         metrics: [
             ["Backend", "Checking..."],
-            ["Relational DB", "Not wired"],
-            ["Vector store", "Not wired"]
+            ["Relational DB", "Configured"],
+            ["Vector store", "pgvector"]
         ]
     },
     {
@@ -29,14 +29,14 @@ const pages = [
         id: "search",
         title: "Search",
         icon: "Q",
-        summary: "Exercise semantic and structured retrieval before chat generation is added.",
+        summary: "Search the imported paper corpus using the configured embedding model and local vector store.",
         details: ["Run top-K semantic search", "Show vector scores", "Resolve vector hits back to paper records"]
     },
     {
         id: "chat",
         title: "Chat",
         icon: "C",
-        summary: "Future grounded RAG chat interface with citations and retrieval transparency.",
+        summary: "Ask questions grounded in the imported arXiv papers through Microsoft AI Foundry.",
         details: ["Ask research questions", "Render cited source papers", "Show retrieval/debug context"]
     },
     {
@@ -77,6 +77,7 @@ let backendHealth = {
 };
 let embeddingStatus = null;
 let embeddingStatusError = null;
+let chatTranscript = [];
 
 function escapeHtml(value) {
     return String(value)
@@ -130,7 +131,12 @@ function renderPage() {
     }
 
     if (page.id === "search") {
-        renderRetrievalPreviewPage(page);
+        renderSearchPage(page);
+        return;
+    }
+
+    if (page.id === "chat") {
+        renderChatPage(page);
         return;
     }
 
@@ -196,11 +202,11 @@ function renderSystemStatusPage(page) {
                         <span>Backend</span>
                     </div>
                     <div class="metric">
-                        <strong>Not wired</strong>
+                        <strong>Configured</strong>
                         <span>Relational DB</span>
                     </div>
                     <div class="metric">
-                        <strong>Not wired</strong>
+                        <strong>pgvector</strong>
                         <span>Vector store</span>
                     </div>
                 </div>
@@ -251,6 +257,10 @@ function renderSettingsPage(page) {
 }
 
 function renderEmbeddingStatusPage(page) {
+    const jobStatus = embeddingStatus?.jobStatus ?? "IDLE";
+    const jobProgress = embeddingStatus
+        ? `${embeddingStatus.jobPapersScanned ?? 0}/${embeddingStatus.jobTotalPapers ?? embeddingStatus.papers} papers scanned · ${embeddingStatus.jobEmbedded ?? 0} embedded · ${embeddingStatus.jobSkipped ?? 0} skipped`
+        : "No ingestion job status available.";
     const statusMarkup = embeddingStatus
         ? `
             <div class="metric-grid">
@@ -270,6 +280,10 @@ function renderEmbeddingStatusPage(page) {
                     <strong>${escapeHtml(embeddingStatus.coveragePercent.toFixed(1))}%</strong>
                     <span>Coverage</span>
                 </div>
+                <div class="metric">
+                    <strong>${escapeHtml(jobStatus)}</strong>
+                    <span>Current job</span>
+                </div>
             </div>
             <div class="config-grid">
                 <div class="config-item">
@@ -288,12 +302,12 @@ function renderEmbeddingStatusPage(page) {
         <div class="hero-grid">
             <div>
                 <h2>${page.title}</h2>
-                <p class="placeholder-copy">Embedding checkpointing and vector persistence are active. Run <code>embed-papers</code> with the local profile to upsert vectors into pgvector, then use <code>search-vector &lt;query&gt;</code> for retrieval-only smoke testing.</p>
+                <p class="placeholder-copy">Embedding checkpointing and vector persistence are active. Run <code>embed-papers</code> with the foundry profile to upsert remote embeddings into pgvector, then use Search or <code>search-vector &lt;query&gt;</code> for retrieval testing.</p>
                 <div class="health-panel ${embeddingStatusError ? "error" : ""}">
                     <div>
-                        <span class="status-badge ${embeddingStatusError ? "error" : "ok"}">${embeddingStatusError ? "Unavailable" : "Checkpointing"}</span>
+                        <span class="status-badge ${embeddingStatusError || jobStatus === "FAILED" ? "error" : jobStatus === "RUNNING" ? "working" : "ok"}">${embeddingStatusError ? "Unavailable" : escapeHtml(jobStatus)}</span>
                         <h3>Embedding ingestion status</h3>
-                        <p>${embeddingStatusError ? escapeHtml(embeddingStatusError) : "Offline deterministic embeddings can be checkpointed locally without provider keys."}</p>
+                        <p>${embeddingStatusError ? escapeHtml(embeddingStatusError) : escapeHtml(jobProgress)}</p>
                     </div>
                     <button class="primary-button" type="button" data-embedding-status-refresh>Refresh</button>
                 </div>
@@ -305,86 +319,167 @@ function renderEmbeddingStatusPage(page) {
     `;
 }
 
-function renderRetrievalPreviewPage(page) {
+function renderSearchPage(page) {
     pageContent.innerHTML = `
-        <div class="preview-layout">
+        <div class="search-layout">
             <div>
                 <h2>${page.title}</h2>
-                <p class="placeholder-copy">Build the exact title+abstract retrieval document used by embedding ingestion. This preview is deterministic and does not call an LLM or vector database.</p>
-                <form class="preview-form" data-retrieval-preview-form>
+                <p class="placeholder-copy">Semantic retrieval is performed locally. The browser calls Spring Boot; Spring Boot calls the Foundry embedding deployment and searches pgvector.</p>
+                <form class="preview-form" data-search-form>
                     <label>
-                        arXiv ID
-                        <input name="arxivId" type="text" value="2401.00001" required>
+                        Query
+                        <input name="query" type="text" placeholder="papers about neural retrieval" required>
                     </label>
                     <label>
-                        Title
-                        <input name="title" type="text" value="Retrieval Testing" required>
+                        Results
+                        <input name="topK" type="number" value="5" min="1" max="50">
                     </label>
                     <label>
-                        Abstract
-                        <textarea name="abstractText" rows="8" required>A concise abstract for repository testing.</textarea>
+                        Category (optional)
+                        <input name="category" type="text" placeholder="cs.AI">
                     </label>
-                    <button class="primary-button" type="submit">Generate Retrieval Document</button>
+                    <div class="date-fields">
+                        <label>
+                            From date
+                            <input name="fromDate" type="date">
+                        </label>
+                        <label>
+                            To date
+                            <input name="toDate" type="date">
+                        </label>
+                    </div>
+                    <button class="primary-button" type="submit">Search papers</button>
                 </form>
             </div>
-            <aside class="preview-result" id="retrieval-preview-result">
+            <aside class="preview-result" id="search-result">
                 <span class="status-badge">Ready</span>
-                <p class="placeholder-copy">Submit the form to see the generated chunk ID, SHA-256 content hash, and embedding text.</p>
+                <p class="placeholder-copy">Submit a query to retrieve papers from the local vector store.</p>
             </aside>
         </div>
     `;
 }
 
-async function submitRetrievalPreview(form) {
-    const result = document.querySelector("#retrieval-preview-result");
+function renderChatPage(page) {
+    const transcriptMarkup = chatTranscript.length === 0
+        ? `<p class="placeholder-copy">Ask a question about the imported papers. The model will request local retrieval tools before answering.</p>`
+        : chatTranscript.map(entry => {
+            const citations = entry.citations?.length
+                ? `<div class="citation-list"><strong>Sources</strong>${entry.citations.map(citation => `
+                    <span class="citation">[arXiv:${escapeHtml(citation.arxivId)}] ${escapeHtml(citation.title)}${citation.score == null ? "" : ` · score ${Number(citation.score).toFixed(3)}`}</span>
+                `).join("")}</div>`
+                : "";
+            const tools = entry.toolsUsed?.length
+                ? `<small class="tool-trace">Tools: ${entry.toolsUsed.map(escapeHtml).join(", ")}</small>`
+                : "";
+            return `<div class="chat-message ${entry.role === "user" ? "user" : "assistant"}">
+                <strong>${entry.role === "user" ? "You" : "Grounded assistant"}</strong>
+                <p>${escapeHtml(entry.content)}</p>${citations}${tools}
+            </div>`;
+        }).join("");
+
+    pageContent.innerHTML = `
+        <div>
+            <h2>${page.title}</h2>
+            <p class="placeholder-copy">${page.summary}</p>
+            <div class="chat-transcript">${transcriptMarkup}</div>
+            <form class="chat-form" data-chat-form>
+                <label>
+                    Question
+                    <textarea name="message" rows="4" placeholder="Which papers discuss neural retrieval?" required></textarea>
+                </label>
+                <button class="primary-button" type="submit">Ask Foundry</button>
+            </form>
+        </div>
+    `;
+}
+
+async function submitSearch(form) {
+    const result = document.querySelector("#search-result");
     const formData = new FormData(form);
 
     result.innerHTML = `
         <span class="status-badge">Working</span>
-        <p class="placeholder-copy">Generating deterministic retrieval document...</p>
+        <p class="placeholder-copy">Embedding query and searching the local vector store...</p>
     `;
 
     try {
-        const response = await fetch("/api/retrieval-documents/preview", {
+        const response = await fetch("/api/search", {
             method: "POST",
             headers: {
                 "Accept": "application/json",
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                arxivId: formData.get("arxivId"),
-                title: formData.get("title"),
-                abstractText: formData.get("abstractText")
+                query: formData.get("query"),
+                topK: Number(formData.get("topK")),
+                category: formData.get("category") || null,
+                fromDate: formData.get("fromDate") || null,
+                toDate: formData.get("toDate") || null
             })
         });
 
         if (!response.ok) {
-            throw new Error(`Preview endpoint returned ${response.status}`);
+            throw new Error(`Search endpoint returned ${response.status}`);
         }
 
-        const documentPreview = await response.json();
+        const searchResponse = await response.json();
         result.innerHTML = `
-            <span class="status-badge ok">Generated</span>
-            <div class="config-grid">
-                <div class="config-item">
-                    <span>Chunk ID</span>
-                    <strong>${escapeHtml(documentPreview.chunkId)}</strong>
-                </div>
-                <div class="config-item">
-                    <span>Content hash</span>
-                    <strong class="hash-value">${escapeHtml(documentPreview.contentHash)}</strong>
-                </div>
-            </div>
-            <h3>Embedding text</h3>
-            <pre class="document-preview">${escapeHtml(documentPreview.text)}</pre>
+            <span class="status-badge ok">${searchResponse.results.length} result(s)</span>
+            <p class="placeholder-copy">Embedding model: ${escapeHtml(searchResponse.embeddingModel)}</p>
+            <div class="result-list">${searchResponse.results.map(resultItem => `
+                <article class="result-card">
+                    <strong>${escapeHtml(resultItem.title)}</strong>
+                    <span>[arXiv:${escapeHtml(resultItem.arxivId)}] · score ${Number(resultItem.score).toFixed(3)}</span>
+                    <p>${escapeHtml(resultItem.abstractText)}</p>
+                </article>
+            `).join("") || `<p class="placeholder-copy">No matching papers were found. Confirm that papers were imported and embedded.</p>`}</div>
         `;
         clearGlobalError();
     } catch {
         result.innerHTML = `
             <span class="status-badge error">Failed</span>
-            <p class="placeholder-copy">The preview endpoint is unavailable or rejected the request.</p>
+            <p class="placeholder-copy">The search endpoint is unavailable or rejected the request.</p>
         `;
-        showGlobalError("Retrieval document preview failed. Check backend health and required form values.");
+        showGlobalError("Semantic search failed. Check database, embeddings, and Foundry configuration.");
+    }
+}
+
+async function submitChat(form) {
+    const formData = new FormData(form);
+    const message = String(formData.get("message") ?? "").trim();
+    if (!message) {
+        return;
+    }
+    chatTranscript.push({role: "user", content: message});
+    renderPage();
+    const chatForm = document.querySelector("[data-chat-form]");
+    if (chatForm) {
+        chatForm.querySelector("textarea").disabled = true;
+        chatForm.querySelector("button").disabled = true;
+    }
+    try {
+        const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: {"Accept": "application/json", "Content-Type": "application/json"},
+            body: JSON.stringify({message})
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error ?? `Chat endpoint returned ${response.status}`);
+        }
+        chatTranscript.push({
+            role: "assistant",
+            content: payload.answer,
+            citations: payload.citations ?? [],
+            toolsUsed: payload.toolsUsed ?? []
+        });
+        clearGlobalError();
+    } catch (error) {
+        chatTranscript.push({role: "assistant", content: `Chat failed: ${error.message}`});
+        showGlobalError("Grounded chat failed. Check the Foundry key, deployment, database, and embedding coverage.");
+    }
+    if ((window.location.hash.replace("#/", "") || "system-status") === "chat") {
+        renderPage();
     }
 }
 
@@ -492,12 +587,21 @@ pageContent.addEventListener("click", (event) => {
     }
 });
 pageContent.addEventListener("submit", (event) => {
-    if (event.target instanceof HTMLFormElement && event.target.matches("[data-retrieval-preview-form]")) {
+    if (event.target instanceof HTMLFormElement && event.target.matches("[data-search-form]")) {
         event.preventDefault();
-        submitRetrievalPreview(event.target);
+        submitSearch(event.target);
+    }
+    if (event.target instanceof HTMLFormElement && event.target.matches("[data-chat-form]")) {
+        event.preventDefault();
+        submitChat(event.target);
     }
 });
 renderPage();
 refreshBackendStatus();
 refreshRuntimeConfig();
 refreshEmbeddingStatus();
+setInterval(() => {
+    if ((window.location.hash.replace("#/", "") || "system-status") === "vector-stores") {
+        refreshEmbeddingStatus();
+    }
+}, 5000);

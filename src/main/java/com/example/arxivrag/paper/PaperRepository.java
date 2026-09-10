@@ -19,4 +19,23 @@ public interface PaperRepository extends JpaRepository<Paper, Long> {
 
     @Query(value = "select * from papers where :category = any(categories)", nativeQuery = true)
     List<Paper> findByCategory(@Param("category") String category);
+
+    @Query(value = """
+            select * from papers
+            where (:query is null
+                or lower(title) like lower(concat('%', :query, '%'))
+                or lower(abstract_text) like lower(concat('%', :query, '%')))
+              and (:category is null or :category = any(categories))
+              and (:fromDate is null or submitted_date >= :fromDate)
+              and (:toDate is null or submitted_date <= :toDate)
+            order by submitted_date desc nulls last, id
+            limit :limit
+            """, nativeQuery = true)
+    List<Paper> searchRelational(
+            @Param("query") String query,
+            @Param("category") String category,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate,
+            @Param("limit") int limit
+    );
 }

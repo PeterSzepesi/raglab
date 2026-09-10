@@ -22,18 +22,21 @@ public class ArxivImportCommandLineRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        var sourceArgs = args.getSourceArgs();
-        if (sourceArgs.length == 0 || !"import-arxiv".equals(sourceArgs[0])) {
+        var commandArgs = args.getNonOptionArgs();
+        if (commandArgs.isEmpty() || !"import-arxiv".equals(commandArgs.get(0))) {
             return;
         }
 
-        if (sourceArgs.length != 2) {
+        if (commandArgs.size() != 2) {
             System.err.println("Usage: import-arxiv <path-to-arxiv-jsonl>");
             System.exit(SpringApplication.exit(applicationContext, () -> 2));
         }
 
         try {
-            var result = importService.importDataset(Path.of(sourceArgs[1]));
+            var datasetPath = Path.of(commandArgs.get(1));
+            System.out.println("Starting arXiv import from " + datasetPath);
+            System.out.flush();
+            var result = importService.importDataset(datasetPath);
             System.out.print(result.formatSummary());
             System.exit(SpringApplication.exit(applicationContext, () -> 0));
         } catch (ArxivImportException exception) {

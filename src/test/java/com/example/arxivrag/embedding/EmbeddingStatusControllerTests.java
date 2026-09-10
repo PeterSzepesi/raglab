@@ -2,28 +2,30 @@ package com.example.arxivrag.embedding;
 
 import com.example.arxivrag.arxiv.ArxivImportService;
 import com.example.arxivrag.paper.PaperRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest
 class EmbeddingStatusControllerTests {
 
-    @LocalServerPort
-    private int port;
+    @Autowired
+    private WebApplicationContext webApplicationContext;
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private MockMvc mockMvc;
 
     @jakarta.annotation.Resource
     private ArxivImportService importService;
@@ -39,6 +41,7 @@ class EmbeddingStatusControllerTests {
 
     @BeforeEach
     void deleteExistingData() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
         checkpointRepository.deleteAll();
         paperRepository.deleteAll();
     }
@@ -48,17 +51,17 @@ class EmbeddingStatusControllerTests {
         importService.importDataset(Path.of("src/test/resources/fixtures/arxiv-tiny.jsonl"));
         embeddingIngestionService.ingestAll();
 
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/embeddings/status"))
-                .GET()
-                .build();
+        var response = mockMvc.perform(get("/api/embeddings/status"))
+                .andExpect(status().is2xxSuccessful())
+                .andExpect(content().contentTypeCompatibleWith("application/json"))
+                .andReturn();
 
-        var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        assertThat(response.statusCode()).isBetween(200, 299);
-        assertThat(response.body()).contains("\"papers\":2");
-        assertThat(response.body()).contains("\"checkpoints\":2");
-        assertThat(response.body()).contains("\"checkpointedPapers\":2");
-        assertThat(response.body()).contains("\"coveragePercent\":100.0");
-        assertThat(response.body()).contains("\"embeddingModel\":\"offline-deterministic-1536\"");
+        assertThat(response.getResponse().getContentAsString()).contains("\"papers\":2");
+        assertThat(response.getResponse().getContentAsString()).contains("\"checkpoints\":2");
+        assertThat(response.getResponse().getContentAsString()).contains("\"checkpointedPapers\":2");
+        assertThat(response.getResponse().getContentAsString()).contains("\"coveragePercent\":100.0");
+        assertThat(response.getResponse().getContentAsString()).contains("\"embeddingModel\":\"offline-deterministic-1536\"");
+        assertThat(response.getResponse().getContentAsString()).contains("\"jobStatus\":\"COMPLETED\"");
+        assertThat(response.getResponse().getContentAsString()).contains("\"jobEmbedded\":2");
     }
 }

@@ -163,6 +163,12 @@ h2 {
     background: #fef2f2;
 }
 
+.status-badge.working {
+    border-color: rgba(180, 83, 9, 0.25);
+    color: #b45309;
+    background: #fffbeb;
+}
+
 .icon-button,
 .primary-button {
     border: 1px solid var(--border);
@@ -351,6 +357,12 @@ h2 {
     gap: 1.25rem;
 }
 
+.search-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(20rem, 1.2fr);
+    gap: 1.25rem;
+}
+
 .preview-form {
     display: grid;
     gap: 0.85rem;
@@ -379,6 +391,82 @@ h2 {
 
 .preview-form textarea {
     resize: vertical;
+}
+
+.date-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.result-list,
+.chat-transcript {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.result-card,
+.chat-message {
+    border: 1px solid var(--border);
+    border-radius: 0.9rem;
+    background: #fbfdff;
+    padding: 0.9rem;
+}
+
+.result-card > span,
+.tool-trace,
+.citation {
+    display: block;
+    margin-top: 0.3rem;
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
+.result-card p,
+.chat-message p {
+    margin: 0.65rem 0 0;
+    color: var(--muted);
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+.chat-message.user {
+    border-color: rgba(37, 99, 235, 0.25);
+    background: #eff6ff;
+}
+
+.chat-form {
+    display: grid;
+    gap: 0.85rem;
+    margin-top: 1.25rem;
+}
+
+.chat-form label {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 750;
+}
+
+.chat-form textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    padding: 0.75rem 0.85rem;
+    resize: vertical;
+}
+
+.citation-list {
+    margin-top: 0.75rem;
+}
+
+.citation {
+    color: var(--accent-strong);
 }
 
 .preview-form input:focus,
@@ -430,7 +518,12 @@ h2 {
     .topbar,
     .hero-grid,
     .preview-layout,
+    .search-layout,
     .health-panel {
         display: grid;
+    }
+
+    .date-fields {
+        grid-template-columns: 1fr;
     }
 }

@@ -20,12 +20,12 @@ public class EmbeddingIngestionCommandLineRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        var sourceArgs = args.getSourceArgs();
-        if (sourceArgs.length == 0 || !"embed-papers".equals(sourceArgs[0])) {
+        var commandArgs = args.getNonOptionArgs();
+        if (commandArgs.isEmpty() || !"embed-papers".equals(commandArgs.get(0))) {
             return;
         }
 
-        if (sourceArgs.length != 1) {
+        if (commandArgs.size() != 1) {
             System.err.println("Usage: embed-papers");
             System.exit(SpringApplication.exit(applicationContext, () -> 2));
         }
@@ -33,9 +33,11 @@ public class EmbeddingIngestionCommandLineRunner implements ApplicationRunner {
         try {
             var result = embeddingIngestionService.ingestAll();
             System.out.print(result.formatSummary());
+            System.out.flush();
             System.exit(SpringApplication.exit(applicationContext, () -> 0));
         } catch (RuntimeException exception) {
-            System.err.println(exception.getMessage());
+            System.err.println("Embedding ingestion failed: " + exception.getMessage());
+            System.err.flush();
             System.exit(SpringApplication.exit(applicationContext, () -> 1));
         }
     }

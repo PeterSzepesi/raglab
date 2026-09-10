@@ -121,7 +121,7 @@ Rules:
 
 Owns model-provider and tool-calling integration.
 
-Planned responsibilities:
+Current responsibilities:
 - AI Foundry chat model client through the current provider HTTP adapter; Spring AI orchestration is planned for the tool-calling step
 - AI Foundry embedding model client through the current provider HTTP adapter
 - tool definitions for semantic search, relational search, and paper lookup
@@ -131,6 +131,10 @@ Rules:
 - AI Foundry endpoints, deployment names, API versions, and credentials are profile-specific configuration.
 - The model may request a tool, but only the local application executes it.
 - Never expose arbitrary SQL, database credentials, or unrestricted local network access to the model.
+
+### `search`
+
+Owns the `POST /api/search` HTTP contract. It validates request bounds and delegates semantic retrieval to `SemanticSearchService`, which resolves vector hits through canonical PostgreSQL paper rows.
 
 ### `vector.pgvector`
 
