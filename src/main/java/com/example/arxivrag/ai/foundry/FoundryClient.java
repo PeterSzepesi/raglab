@@ -14,6 +14,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -31,42 +32,83 @@ public class FoundryClient {
 
     private final HttpClient httpClient;
 
+    private final FoundryQuotaLimiter quotaLimiter;
+
     @Autowired
     public FoundryClient(FoundryProperties properties, ObjectMapper objectMapper) {
         this(properties, objectMapper, HttpClient.newBuilder()
                 .connectTimeout(timeout(properties.getRequestTimeout()))
-                .build());
+                .build(), new FoundryQuotaLimiter(properties.getMaxRequestsPerMinute(), properties.getMaxTokensPerMinute()));
     }
 
     FoundryClient(FoundryProperties properties, ObjectMapper objectMapper, HttpClient httpClient) {
+        this(properties, objectMapper, httpClient,
+                new FoundryQuotaLimiter(properties.getMaxRequestsPerMinute(), properties.getMaxTokensPerMinute()));
+    }
+
+    FoundryClient(FoundryProperties properties, ObjectMapper objectMapper, HttpClient httpClient,
+                  FoundryQuotaLimiter quotaLimiter) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
+        this.quotaLimiter = quotaLimiter;
     }
 
     public List<Double> embed(String deployment, String input, int dimensions) {
+        return embed(deployment, List.of(input), dimensions).getFirst();
+    }
+
+    public List<List<Double>> embed(String deployment, List<String> inputs, int dimensions) {
+        if (deployment == null || deployment.isBlank()) {
+            throw new FoundryProviderException("Foundry embedding deployment must not be blank");
+        }
+        if (inputs == null || inputs.isEmpty()) {
+            throw new FoundryProviderException("Foundry embedding requires at least one input");
+        }
+        if (dimensions <= 0) {
+            throw new FoundryProviderException("Foundry embedding dimensions must be positive");
+        }
         var body = writeJson(Map.of(
                 "model", deployment,
-                "input", List.of(input),
+                "input", inputs,
                 "dimensions", dimensions
         ));
-        var response = post("/openai/deployments/" + encode(deployment) + "/embeddings", body);
+        quotaLimiter.acquire(inputs.stream().mapToInt(FoundryClient::estimateTokens).sum());
+        var response = postWithRetry("/openai/deployments/" + encode(deployment) + "/embeddings", body);
         var data = response.path("data");
-        if (!data.isArray() || data.size() != 1 || !data.get(0).path("embedding").isArray()) {
-            throw new FoundryProviderException("Foundry embedding response did not contain one embedding array");
+        if (!data.isArray() || data.size() != inputs.size()) {
+            throw new FoundryProviderException("Foundry embedding response contained "
+                    + (data.isArray() ? data.size() : 0) + " vectors for " + inputs.size() + " inputs");
         }
 
-        var values = new ArrayList<Double>();
-        for (var value : data.get(0).path("embedding")) {
-            if (!value.isNumber() || !Double.isFinite(value.doubleValue())) {
-                throw new FoundryProviderException("Foundry returned a non-finite embedding value");
+        var embeddings = new ArrayList<List<Double>>(java.util.Collections.nCopies(inputs.size(), null));
+        var seenIndexes = new java.util.HashSet<Integer>();
+        for (var position = 0; position < data.size(); position++) {
+            var item = data.get(position);
+            var index = item.path("index").isInt() ? item.path("index").intValue() : position;
+            if (index < 0 || index >= inputs.size() || !seenIndexes.add(index)) {
+                throw new FoundryProviderException("Foundry embedding response contained invalid vector indexes");
             }
-            values.add(value.doubleValue());
+            var embedding = item.path("embedding");
+            if (!embedding.isArray()) {
+                throw new FoundryProviderException("Foundry embedding response did not contain an embedding array");
+            }
+            var values = new ArrayList<Double>(embedding.size());
+            for (var value : embedding) {
+                if (!value.isNumber() || !Double.isFinite(value.doubleValue())) {
+                    throw new FoundryProviderException("Foundry returned a non-finite embedding value");
+                }
+                values.add(value.doubleValue());
+            }
+            if (values.isEmpty()) {
+                throw new FoundryProviderException("Foundry returned an empty embedding");
+            }
+            embeddings.set(index, List.copyOf(values));
         }
-        if (values.isEmpty()) {
-            throw new FoundryProviderException("Foundry returned an empty embedding");
+        if (embeddings.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new FoundryProviderException("Foundry embedding response did not contain every input index");
         }
-        return List.copyOf(values);
+        return List.copyOf(embeddings);
     }
 
     public String chat(String deployment, String systemPrompt, String userMessage) {
@@ -103,7 +145,10 @@ public class FoundryClient {
             payload.put("tool_choice", "auto");
         }
 
-        var response = post("/openai/deployments/" + encode(deployment) + "/chat/completions", writeJson(payload));
+        quotaLimiter.acquire(messages.stream()
+                .mapToInt(message -> estimateTokens(String.valueOf(message.getOrDefault("content", ""))))
+                .sum());
+        var response = postWithRetry("/openai/deployments/" + encode(deployment) + "/chat/completions", writeJson(payload));
         var message = response.path("choices").path(0).path("message");
         if (!message.isObject()) {
             throw new FoundryProviderException("Foundry chat response did not contain an assistant message");
@@ -163,8 +208,18 @@ public class FoundryClient {
         try {
             var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new FoundryProviderException("Foundry request failed with HTTP "
-                        + response.statusCode() + ": " + truncate(response.body()));
+                var responseHeaders = response.headers();
+                Duration retryAfter = null;
+                if (responseHeaders != null) {
+                    retryAfter = responseHeaders.firstValue("retry-after")
+                            .flatMap(FoundryClient::parseRetryAfter)
+                            .orElse(null);
+                }
+                var requestId = responseHeaders == null ? null : responseHeaders.firstValue("x-request-id").orElse(null);
+                throw new FoundryProviderException(
+                        "Foundry request failed with HTTP " + response.statusCode() + ": " + truncate(response.body()),
+                        response.statusCode(), retryAfter, requestId
+                );
             }
             return objectMapper.readTree(response.body());
         } catch (InterruptedException exception) {
@@ -175,6 +230,59 @@ public class FoundryClient {
                 throw providerException;
             }
             throw new FoundryProviderException("Could not call Microsoft AI Foundry at " + baseUrl(), exception);
+        }
+    }
+
+    private JsonNode postWithRetry(String path, String body) {
+        var attempt = 0;
+        while (true) {
+            try {
+                return post(path, body);
+            } catch (FoundryProviderException exception) {
+                if (!exception.retryable() || attempt >= Math.max(0, properties.getMaxRetries())) {
+                    throw exception;
+                }
+                var delay = exception.retryAfter() == null
+                        ? backoff(attempt)
+                        : exception.retryAfter();
+                sleep(delay);
+                attempt++;
+            }
+        }
+    }
+
+    private Duration backoff(int attempt) {
+        var initial = positiveDuration(properties.getRetryInitialBackoff(), Duration.ofSeconds(1));
+        var maximum = positiveDuration(properties.getRetryMaxBackoff(), Duration.ofSeconds(10));
+        var multiplier = 1L << Math.min(attempt, 20);
+        return initial.multipliedBy(multiplier).compareTo(maximum) > 0 ? maximum : initial.multipliedBy(multiplier);
+    }
+
+    private static Duration positiveDuration(Duration value, Duration fallback) {
+        return value == null || value.isNegative() || value.isZero() ? fallback : value;
+    }
+
+    private static void sleep(Duration duration) {
+        try {
+            Thread.sleep(Math.max(1L, duration.toMillis()));
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new FoundryProviderException("Foundry retry wait was interrupted", exception);
+        }
+    }
+
+    private static java.util.Optional<Duration> parseRetryAfter(String value) {
+        try {
+            return java.util.Optional.of(Duration.ofSeconds(Long.parseLong(value.trim())));
+        } catch (NumberFormatException ignored) {
+            try {
+                var retryAt = java.time.ZonedDateTime.parse(value.trim(), java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME);
+                return java.util.Optional.of(Duration.between(Instant.now(), retryAt.toInstant()).isNegative()
+                        ? Duration.ZERO
+                        : Duration.between(Instant.now(), retryAt.toInstant()));
+            } catch (RuntimeException ignoredDate) {
+                return java.util.Optional.empty();
+            }
         }
     }
 
@@ -211,6 +319,10 @@ public class FoundryClient {
         return configured;
     }
 
+    private static int estimateTokens(String value) {
+        return Math.max(1, (value == null ? 0 : value.length() + 3) / 4);
+    }
+
     private static String truncate(String value) {
         if (value == null) {
             return "";
@@ -220,12 +332,47 @@ public class FoundryClient {
 
     public static class FoundryProviderException extends RuntimeException {
 
+        private final int statusCode;
+
+        private final Duration retryAfter;
+
+        private final String requestId;
+
         public FoundryProviderException(String message) {
-            super(message);
+            this(message, null, 0, null, null);
         }
 
         public FoundryProviderException(String message, Throwable cause) {
+            this(message, cause, 0, null, null);
+        }
+
+        private FoundryProviderException(String message, int statusCode, Duration retryAfter, String requestId) {
+            this(message, null, statusCode, retryAfter, requestId);
+        }
+
+        private FoundryProviderException(String message, Throwable cause, int statusCode,
+                                         Duration retryAfter, String requestId) {
             super(message, cause);
+            this.statusCode = statusCode;
+            this.retryAfter = retryAfter;
+            this.requestId = requestId;
+        }
+
+        public int statusCode() {
+            return statusCode;
+        }
+
+        public Duration retryAfter() {
+            return retryAfter;
+        }
+
+        public String requestId() {
+            return requestId;
+        }
+
+        public boolean retryable() {
+            return statusCode == 408 || statusCode == 429 || statusCode == 500
+                    || statusCode == 502 || statusCode == 503 || statusCode == 504;
         }
     }
 

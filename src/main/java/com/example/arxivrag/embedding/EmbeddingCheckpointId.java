@@ -21,14 +21,23 @@ public class EmbeddingCheckpointId implements Serializable {
     @Column(name = "content_hash", nullable = false, length = 64)
     private String contentHash;
 
+    @Column(name = "document_schema_version", nullable = false, length = 64)
+    private String documentSchemaVersion;
+
     protected EmbeddingCheckpointId() {
     }
 
     public EmbeddingCheckpointId(Long paperId, String chunkId, String embeddingModel, String contentHash) {
+        this(paperId, chunkId, embeddingModel, contentHash, RetrievalDocumentFactory.DOCUMENT_SCHEMA_VERSION);
+    }
+
+    public EmbeddingCheckpointId(Long paperId, String chunkId, String embeddingModel, String contentHash,
+                                 String documentSchemaVersion) {
         this.paperId = paperId;
         this.chunkId = chunkId;
         this.embeddingModel = embeddingModel;
         this.contentHash = contentHash;
+        this.documentSchemaVersion = documentSchemaVersion;
     }
 
     public Long getPaperId() {
@@ -47,6 +56,10 @@ public class EmbeddingCheckpointId implements Serializable {
         return contentHash;
     }
 
+    public String getDocumentSchemaVersion() {
+        return documentSchemaVersion;
+    }
+
     @Override
     public boolean equals(Object object) {
         if (this == object) {
@@ -58,11 +71,12 @@ public class EmbeddingCheckpointId implements Serializable {
         return Objects.equals(paperId, that.paperId)
                 && Objects.equals(chunkId, that.chunkId)
                 && Objects.equals(embeddingModel, that.embeddingModel)
-                && Objects.equals(contentHash, that.contentHash);
+                && Objects.equals(contentHash, that.contentHash)
+                && Objects.equals(documentSchemaVersion, that.documentSchemaVersion);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(paperId, chunkId, embeddingModel, contentHash);
+        return Objects.hash(paperId, chunkId, embeddingModel, contentHash, documentSchemaVersion);
     }
 }

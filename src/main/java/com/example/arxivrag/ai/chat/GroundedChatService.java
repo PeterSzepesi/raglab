@@ -17,6 +17,8 @@ public class GroundedChatService {
 
     private static final int MAX_TOOL_ROUNDS = 3;
 
+    private static final int MAX_MESSAGE_LENGTH = 8000;
+
     private static final String SYSTEM_PROMPT = """
             You are a research assistant for an arXiv paper corpus.
             Use the provided retrieval tools before answering any question about papers or research.
@@ -50,6 +52,9 @@ public class GroundedChatService {
     public GroundedChatResponse chat(String message) {
         if (message == null || message.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
+        }
+        if (message.length() > MAX_MESSAGE_LENGTH) {
+            throw new IllegalArgumentException("message must not exceed " + MAX_MESSAGE_LENGTH + " characters");
         }
 
         var messages = new ArrayList<Map<String, Object>>();

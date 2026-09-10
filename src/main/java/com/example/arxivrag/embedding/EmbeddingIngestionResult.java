@@ -1,6 +1,7 @@
 package com.example.arxivrag.embedding;
 
 import java.time.Duration;
+import java.util.UUID;
 
 public record EmbeddingIngestionResult(
         long papersScanned,
@@ -9,8 +10,24 @@ public record EmbeddingIngestionResult(
         long skipped,
         String embeddingModel,
         int embeddingDimension,
-        Duration elapsed
+        Duration elapsed,
+        UUID jobId,
+        long providerRequests,
+        long failures
 ) {
+
+    public EmbeddingIngestionResult(
+            long papersScanned,
+            long documentsPrepared,
+            long embedded,
+            long skipped,
+            String embeddingModel,
+            int embeddingDimension,
+            Duration elapsed
+    ) {
+        this(papersScanned, documentsPrepared, embedded, skipped, embeddingModel, embeddingDimension,
+                elapsed, null, 0, 0);
+    }
 
     public String formatSummary() {
         return """
@@ -22,6 +39,9 @@ public record EmbeddingIngestionResult(
                 Skipped unchanged:    %d
                 Embedding model:      %s
                 Embedding dimension:  %d
+                Provider requests:    %d
+                Failures:              %d
+                Job ID:                %s
                 Elapsed:              %.3f s
                 """.formatted(
                 papersScanned,
@@ -30,6 +50,9 @@ public record EmbeddingIngestionResult(
                 skipped,
                 embeddingModel,
                 embeddingDimension,
+                providerRequests,
+                failures,
+                jobId == null ? "n/a" : jobId,
                 elapsed.toMillis() / 1000.0
         );
     }

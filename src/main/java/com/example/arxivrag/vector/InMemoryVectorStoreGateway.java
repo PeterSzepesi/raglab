@@ -23,6 +23,11 @@ public class InMemoryVectorStoreGateway implements VectorStoreGateway {
     public List<VectorSearchResult> search(VectorSearchRequest request) {
         return documents.values().stream()
                 .filter(document -> document.embeddingModel().equals(request.embeddingModel()))
+                .filter(document -> request.category() == null || document.categories().contains(request.category()))
+                .filter(document -> request.fromDate() == null || (document.submittedDate() != null
+                        && !document.submittedDate().isBefore(request.fromDate())))
+                .filter(document -> request.toDate() == null || (document.submittedDate() != null
+                        && !document.submittedDate().isAfter(request.toDate())))
                 .map(document -> new VectorSearchResult(
                         document.paperId(),
                         document.arxivId(),

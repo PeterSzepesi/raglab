@@ -53,15 +53,74 @@ public class PgVectorStoreGateway implements VectorStoreGateway {
     }
 
     @Override
-    public List<VectorSearchResult> search(VectorSearchRequest request) {
-        return jdbcTemplate.query("""
-                        select paper_id, arxiv_id, chunk_id, content_hash, embedding_model,
-                               1 - (embedding <=> ?::vector) as score, text
-                        from paper_embeddings
-                        where embedding_model = ?
-                        order by embedding <=> ?::vector
-                        limit ?
+    public void upsertAll(List<EmbeddedDocument> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return;
+        }
+        jdbcTemplate.batchUpdate("""
+                        insert into paper_embeddings (
+                            paper_id, arxiv_id, chunk_id, content_hash, embedding_model,
+                            embedding_dimension, text, categories, submitted_date, embedding
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::vector)
+                        on conflict (paper_id, chunk_id, embedding_model) do update set
+                            arxiv_id = excluded.arxiv_id,
+                            content_hash = excluded.content_hash,
+                            embedding_dimension = excluded.embedding_dimension,
+                            text = excluded.text,
+                            categories = excluded.categories,
+                            submitted_date = excluded.submitted_date,
+                            embedding = excluded.embedding,
+                            embedded_at = current_timestamp
                         """,
+                documents,
+                documents.size(),
+                (statement, document) -> {
+                    statement.setObject(1, document.paperId());
+                    statement.setString(2, document.arxivId());
+                    statement.setString(3, document.chunkId());
+                    statement.setString(4, document.contentHash());
+                    statement.setString(5, document.embeddingModel());
+                    statement.setInt(6, document.embeddingDimension());
+                    statement.setString(7, document.text());
+                    statement.setArray(8, statement.getConnection().createArrayOf("varchar", document.categories().toArray()));
+                    if (document.submittedDate() == null) {
+                        statement.setObject(9, null);
+                    } else {
+                        statement.setDate(9, Date.valueOf(document.submittedDate()));
+                    }
+                    statement.setString(10, vectorLiteral(document.embedding()));
+                }
+        );
+    }
+
+    @Override
+    public List<VectorSearchResult> search(VectorSearchRequest request) {
+        var sql = new StringBuilder("""
+                select paper_id, arxiv_id, chunk_id, content_hash, embedding_model,
+                       1 - (embedding <=> ?::vector) as score, text
+                from paper_embeddings
+                where embedding_model = ?
+                """);
+        var parameters = new java.util.ArrayList<Object>();
+        parameters.add(vectorLiteral(request.embedding()));
+        parameters.add(request.embeddingModel());
+        if (request.category() != null) {
+            sql.append(" and ? = any(categories) ");
+            parameters.add(request.category());
+        }
+        if (request.fromDate() != null) {
+            sql.append(" and submitted_date >= ? ");
+            parameters.add(Date.valueOf(request.fromDate()));
+        }
+        if (request.toDate() != null) {
+            sql.append(" and submitted_date <= ? ");
+            parameters.add(Date.valueOf(request.toDate()));
+        }
+        sql.append(" order by embedding <=> ?::vector limit ?");
+        parameters.add(vectorLiteral(request.embedding()));
+        parameters.add(request.topK());
+
+        return jdbcTemplate.query(sql.toString(),
                 (resultSet, rowNumber) -> new VectorSearchResult(
                         resultSet.getLong("paper_id"),
                         resultSet.getString("arxiv_id"),
@@ -71,10 +130,7 @@ public class PgVectorStoreGateway implements VectorStoreGateway {
                         resultSet.getDouble("score"),
                         resultSet.getString("text")
                 ),
-                vectorLiteral(request.embedding()),
-                request.embeddingModel(),
-                vectorLiteral(request.embedding()),
-                request.topK()
+                parameters.toArray()
         );
     }
 

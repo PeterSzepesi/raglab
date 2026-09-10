@@ -72,6 +72,12 @@ mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
 
 Flyway owns schema migrations from `src/main/resources/db/migration`, and Hibernate schema generation is disabled with validation-only behavior.
 
+### Legacy V6 migration recovery
+
+An earlier local Ollama experiment used migration version 6 for `create ollama bge m3 embeddings table`. The current Foundry implementation no longer needs that table, but an existing database can still contain its Flyway history entry. New migrations deliberately continue at V7, V8, and V9 so the applied V6 version is never reused.
+
+If that legacy V6 is present, run Flyway `repair` once with both project migration locations before starting the application. Repair marks the retired, no-longer-resolved V6 migration as deleted while preserving the database objects and data. Do not edit `flyway_schema_history` directly and do not remove the PostgreSQL Docker volume.
+
 PostgreSQL/Testcontainers integration tests are opt-in so the default build still works on machines without Docker:
 
 ```bash
@@ -162,13 +168,25 @@ Focused tests:
 mvnw.cmd "-Dtest=*RetrievalDocument*" test
 ```
 
-## Vector ingestion and retrieval-only search
+## Vector ingestion, search, and grounded chat
 
-With the local pgvector database running and papers imported, generate and persist vectors:
+With the local pgvector database running and papers imported, generate and persist vectors. The default Foundry provider batch is 32 documents and the job is resumable through checkpoints:
 
 ```powershell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=embed-papers"
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=search-vector neural retrieval"
+```
+
+For a bounded smoke run, pass a limit or slice. These options prevent a small test from scanning the complete corpus:
+
+```powershell
+java -jar target\arxiv-rag-0.0.1-SNAPSHOT.jar `
+  --spring.profiles.active=foundry `
+  embed-papers --max-papers=25
+
+java -jar target\arxiv-rag-0.0.1-SNAPSHOT.jar `
+  --spring.profiles.active=foundry `
+  embed-papers --from-paper-id=100 --to-paper-id=150 --dry-run
 ```
 
 The embedding command uses the configured embedding gateway, writes vectors through `VectorStoreGateway`, and checkpoints successful work. The search command embeds the query with the same model, searches the selected local vector store, and resolves returned paper IDs through PostgreSQL. The default profile remains deterministic and offline; the `foundry` profile calls the configured Microsoft AI Foundry embedding deployment.
@@ -200,9 +218,23 @@ com.example.arxivrag
     └── pgvector
 ```
 
-The current working tree contains executable paper, arXiv import, embedding checkpoint, vector upsert/search, retrieval-only CLI slices, and profile-scoped AI Foundry chat/embedding provider adapters. The semantic search REST API, tool-calling orchestration, grounded chat, and benchmark code remain future stages.
+The current working tree contains executable paper, arXiv import, resumable Foundry embedding jobs, pgvector upsert/search, semantic/lexical/hybrid search, local retrieval tools, profile-scoped AI Foundry chat/embedding adapters, grounded chat, and the static UI.
 
-## UI shell
+Useful endpoints:
+
+```text
+POST /api/search
+POST /api/chat                         # foundry profile
+GET  /api/embeddings/status
+POST /api/embeddings/jobs              # bounded background job
+GET  /api/embeddings/jobs/latest
+DELETE /api/embeddings/jobs/current
+GET  /actuator/metrics
+```
+
+The job endpoint is intentionally an unauthenticated local-development control. Add authentication and authorization before binding the application beyond localhost.
+
+## UI
 
 The app shell includes navigation and placeholder pages for:
 
@@ -211,7 +243,7 @@ The app shell includes navigation and placeholder pages for:
 - Papers
 - Search
 - Chat
-- Vector Stores
+- Vector Stores (coverage, live job status, bounded start/cancel controls)
 - Benchmarks
 - Settings
 
@@ -223,12 +255,12 @@ The app shell includes navigation and placeholder pages for:
 - `docs/dataset.md` — dataset ingestion design
 - `docs/implementation_steps.txt` — independently testable implementation steps
 
-## Next implementation tickets
+## Deferred improvement tickets
 
-1. Add Spring AI orchestration and local retrieval-tool execution around the AI Foundry adapters.
-2. Add the semantic search REST API and local retrieval tools.
-3. Add grounded chat with citations.
-4. Add Milvus/Chroma adapters and benchmark comparison.
+1. Add a fixed retrieval evaluation set and exact-versus-HNSW recall measurements.
+2. Add reranking and richer PDF/full-text chunking only when evaluation justifies them.
+3. Add Milvus/Chroma adapters and benchmark comparison using the same corpus and query set.
+4. Add production authentication, managed identity, backups, and deployment hardening.
 
 ## Continuous integration
 

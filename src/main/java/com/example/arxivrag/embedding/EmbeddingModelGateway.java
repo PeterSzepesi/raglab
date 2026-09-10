@@ -9,4 +9,16 @@ public interface EmbeddingModelGateway {
     int dimensions();
 
     List<Double> embed(RetrievalDocument document);
+
+    /**
+     * Embeds a provider-sized batch. Implementations must preserve input order.
+     * The default keeps the offline/test gateways backwards compatible while
+     * Foundry can override it with one HTTP request for the whole batch.
+     */
+    default List<List<Double>> embedBatch(List<RetrievalDocument> documents) {
+        if (documents == null || documents.isEmpty()) {
+            throw new IllegalArgumentException("documents must not be empty");
+        }
+        return documents.stream().map(this::embed).toList();
+    }
 }

@@ -53,6 +53,20 @@ class FoundryClientHttpTests {
     }
 
     @Test
+    void embeddingBatchUsesReturnedIndexesToPreserveInputOrder() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        doReturn(response(200, "{\"data\":["
+                + "{\"index\":1,\"embedding\":[0.4,0.5]},"
+                + "{\"index\":0,\"embedding\":[0.1,0.2]}]}"))
+                .when(httpClient).send(any(HttpRequest.class), any());
+
+        var embeddings = new FoundryClient(properties(), new ObjectMapper(), httpClient)
+                .embed("text-embedding-3-large", List.of("first", "second"), 2);
+
+        assertThat(embeddings).containsExactly(List.of(0.1, 0.2), List.of(0.4, 0.5));
+    }
+
+    @Test
     void parsesToolCallsAndKeepsAssistantMessageForTheFollowUpRequest() throws Exception {
         var httpClient = mock(HttpClient.class);
         doReturn(response(200, "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"semantic_search\",\"arguments\":\"{\\\"query\\\":\\\"neural retrieval\\\",\\\"topK\\\":5}\"}}]}}]}")

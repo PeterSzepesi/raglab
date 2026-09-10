@@ -40,9 +40,15 @@ embedding:
     model-name: offline-deterministic-1536
     dimensions: 1536
     progress-log-interval: 10
+    provider-batch-size: 32
+    provider-max-estimated-tokens: 100000
+    provider-max-estimated-document-tokens: 7000
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}

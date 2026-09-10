@@ -9,6 +9,18 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 public class ArxivRagApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(ArxivRagApplication.class, args);
+        var application = new SpringApplication(ArxivRagApplication.class);
+        if (isCommandLineWorker(args)) {
+            application.setWebApplicationType(org.springframework.boot.WebApplicationType.NONE);
+        }
+        application.run(args);
+    }
+
+    private static boolean isCommandLineWorker(String[] args) {
+        return java.util.Arrays.stream(args).anyMatch(argument ->
+                "embed-papers".equals(argument)
+                        || "import-arxiv".equals(argument)
+                        || "chat-model".equals(argument)
+                        || "search-vector".equals(argument));
     }
 }

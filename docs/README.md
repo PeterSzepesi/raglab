@@ -18,6 +18,6 @@ This folder contains both the current project contract and older experiment note
 
 ## Important current-state warning
 
-As of this branch, the executable application includes the Spring Boot baseline, PostgreSQL/Flyway paper persistence, streaming arXiv import, retrieval-document formatting, embedding checkpointing, vector upsert/search contracts, the in-memory gateway, and the pgvector adapter.
+As of this branch, the executable application includes the Spring Boot baseline, PostgreSQL/Flyway paper persistence, streaming arXiv import, retrieval-document formatting, resumable/bounded embedding jobs, vector upsert/search contracts, the in-memory gateway, and the pgvector adapter.
 
-Step 6B adds profile-scoped Microsoft AI Foundry chat/embedding adapters and a direct chat smoke command. Steps 7–9 now add the semantic search API, bounded local retrieval tools, Foundry-grounded chat API, and static UI integration. Milvus/Chroma adapters and benchmark reporting remain planned.
+Step 6B adds profile-scoped Microsoft AI Foundry chat/embedding adapters and a direct chat smoke command. Steps 7–9 add the semantic search API, bounded local retrieval tools, Foundry-grounded chat API, and static UI integration. The improvement plan adds bounded job operations, batch Foundry ingestion, versioned checkpoints, filtered/hybrid retrieval, PostgreSQL lexical indexes, metrics, and UI job controls. Milvus/Chroma adapters, benchmark evaluation, richer chunking, reranking, and production hardening remain planned.

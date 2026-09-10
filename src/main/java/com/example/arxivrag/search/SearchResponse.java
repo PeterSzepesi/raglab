@@ -8,6 +8,11 @@ public record SearchResponse(
         String query,
         int topK,
         String embeddingModel,
-        List<SemanticSearchResult> results
+        List<SemanticSearchResult> results,
+        String mode
 ) {
+
+    public SearchResponse(String query, int topK, String embeddingModel, List<SemanticSearchResult> results) {
+        this(query, topK, embeddingModel, results, "semantic");
+    }
 }

@@ -4,7 +4,7 @@ This document describes the current executable architecture and the target bound
 
 ## Current Starting Point
 
-The repository currently runs as a small Spring Boot application:
+The repository currently runs as a Spring Boot application with a local data plane and a remote Microsoft AI Foundry model plane:
 
 ```text
 Browser / HTTP client
@@ -15,12 +15,14 @@ Spring Boot 4.1.0
         +-- Static UI
         |     `-- src/main/resources/static
         |
-        +-- Runtime controllers
-        |     +-- GET /api/health
-        |     `-- GET /api/runtime-config
+        +-- Runtime/search/chat/job controllers
+        |     +-- /api/health and /api/runtime-config
+        |     +-- /api/search and /api/chat
+        |     `-- /api/embeddings/status and /api/embeddings/jobs
         |
         `-- Actuator
-              `-- GET /actuator/health
+              +-- GET /actuator/health
+              `-- GET /actuator/metrics
 ```
 
 Implemented Java packages:
@@ -46,7 +48,7 @@ com.example.arxivrag
     └── pgvector
 ```
 
-The `paper`, `arxiv`, `embedding`, and `vector` packages now contain executable slices. Embedding ingestion writes through the selected gateway, and the retrieval-only `search-vector <query>` CLI resolves ranked vector hits back to canonical papers. A semantic search REST API is still planned for Step 7.
+The `paper`, `arxiv`, `embedding`, `vector`, `search`, and `ai` packages contain executable slices. Embedding ingestion is bounded, resumable, batch-oriented, and single-worker safe. The search API supports semantic pgvector retrieval, PostgreSQL lexical retrieval, and a small rank-fusion hybrid mode. Grounded chat uses local retrieval tools while Foundry is used only for model inference.
 
 ## Target Modular Boundaries
 
@@ -96,10 +98,12 @@ Planned responsibilities:
 - deterministic offline embedding profile
 
 Rules:
-- Checkpoint by `(paper_id, chunk_id, embedding_model, content_hash)`.
+- Checkpoint by `(paper_id, chunk_id, embedding_model, content_hash, document_schema_version)`.
 - Re-running embedding ingestion should skip unchanged papers.
-- Live provider failures must not corrupt already-committed batches.
+- Live provider failures must not corrupt already-committed provider batches.
 - The local application sends text to the configured AI Foundry embedding deployment and stores returned vectors locally.
+- Provider calls happen outside short database write transactions; vector and checkpoint writes are committed together.
+- `embedding_jobs` records durable progress while the in-process tracker provides live UI/CLI status.
 
 ### `vector`
 
@@ -122,7 +126,7 @@ Rules:
 Owns model-provider and tool-calling integration.
 
 Current responsibilities:
-- AI Foundry chat model client through the current provider HTTP adapter; Spring AI orchestration is planned for the tool-calling step
+- AI Foundry chat model client through the current provider HTTP adapter
 - AI Foundry embedding model client through the current provider HTTP adapter
 - tool definitions for semantic search, relational search, and paper lookup
 - validation and orchestration of model-requested tool calls
@@ -134,7 +138,7 @@ Rules:
 
 ### `search`
 
-Owns the `POST /api/search` HTTP contract. It validates request bounds and delegates semantic retrieval to `SemanticSearchService`, which resolves vector hits through canonical PostgreSQL paper rows.
+Owns the `POST /api/search` HTTP contract. It validates request bounds and selects semantic, PostgreSQL lexical, or hybrid retrieval. All returned papers resolve through canonical PostgreSQL rows.
 
 ### `vector.pgvector`
 
@@ -161,7 +165,7 @@ ArxivDatasetReader -> ArxivRecordFilter -> PaperMapper
 Local PostgreSQL papers table <-----------------------------+
     |
     v
-RetrievalDocumentFactory -> AI Foundry embedding deployment
+    RetrievalDocumentFactory -> token-aware batches -> AI Foundry embedding deployment
     |
     v
 Local VectorStoreGateway
@@ -171,7 +175,7 @@ Local VectorStoreGateway
     +-- Chroma
     |
     v
-Local retrieval tools -> PaperRepository -> cited context
+Local retrieval tools -> filtered pgvector/PostgreSQL -> cited context
     |
     v
 Local Spring Boot API <-> AI Foundry chat deployment
@@ -196,15 +200,7 @@ Every implementation stage must expose a result without depending on later stage
 
 ## Recommended Implementation Order
 
-1. Add PostgreSQL/Flyway/Testcontainers infrastructure.
-2. Add paper schema, repository, and repository tests.
-3. Add streaming arXiv importer with a tiny fixture.
-4. Add retrieval-document formatting and deterministic hashing.
-5. Add offline embedding model and checkpointing.
-6. Add pgvector gateway and semantic search CLI.
-6B. Add AI Foundry chat and embedding adapters plus local retrieval-tool execution. (Provider adapters implemented; tool execution remains planned.)
-7. Add the semantic search API.
-8. Add grounded answer generation using mock-first tests.
-9. Add chat UI only after `POST /api/chat` exists.
-10. Add Milvus and Chroma adapters.
-11. Add benchmark harness and comparison write-up.
+1–6B. Implemented: PostgreSQL/Flyway, paper persistence, streaming import, retrieval documents, checkpointed embeddings, pgvector search, and Foundry chat/embedding adapters.
+7–9. Implemented: semantic search API, local retrieval tools, grounded chat, citations, and static UI wiring.
+10. Implemented improvement core: bounded/durable embedding jobs, batch Foundry calls, quota-aware retry, short transactions, batch vector writes, versioned checkpoints, filtered vector search, lexical/hybrid search, metrics, and job controls.
+11. Deferred: fixed evaluation set, reranking, richer full-text ingestion/chunking, Milvus/Chroma adapters, benchmark comparison, and production security/deployment hardening.

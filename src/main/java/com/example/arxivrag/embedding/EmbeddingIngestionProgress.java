@@ -3,14 +3,15 @@ package com.example.arxivrag.embedding;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * In-process progress state for the currently running embedding job.
  *
- * <p>The state is deliberately operational rather than persistent. Database
- * checkpoints remain the source of truth for restartability; this component
- * exists so the CLI logs and the status endpoint can show what is happening
- * between committed database batches.</p>
+ * <p>The state is deliberately operational rather than authoritative. Database
+ * checkpoints remain the source of truth for restartability and the
+ * {@code embedding_jobs} table preserves completed/failed job summaries; this
+ * component fills the short live-progress gap between database updates.</p>
  */
 @Component
 public class EmbeddingIngestionProgress {
@@ -19,6 +20,10 @@ public class EmbeddingIngestionProgress {
 
     public synchronized void start(long totalPapers, String model, int dimension, int batchSize) {
         state = ProgressState.running(totalPapers, model, dimension, batchSize);
+    }
+
+    public synchronized void start(UUID jobId, long totalPapers, String model, int dimension, int batchSize) {
+        state = ProgressState.running(jobId, totalPapers, model, dimension, batchSize);
     }
 
     public synchronized void markScanned() {
@@ -34,6 +39,26 @@ public class EmbeddingIngestionProgress {
 
     public synchronized void markEmbedded() {
         state.embedded++;
+        state.updatedAt = Instant.now();
+    }
+
+    public synchronized void providerRequestStarted() {
+        state.providerRequests++;
+        state.updatedAt = Instant.now();
+    }
+
+    public synchronized void providerRequestCompleted(long latencyMillis) {
+        state.lastProviderLatencyMillis = latencyMillis;
+        state.updatedAt = Instant.now();
+    }
+
+    public synchronized void providerRequestFailed() {
+        state.providerFailures++;
+        state.updatedAt = Instant.now();
+    }
+
+    public synchronized void markLastPaper(Long paperId) {
+        state.lastPaperId = paperId;
         state.updatedAt = Instant.now();
     }
 
@@ -56,6 +81,7 @@ public class EmbeddingIngestionProgress {
     public synchronized Snapshot snapshot() {
         return new Snapshot(
                 state.status,
+                state.jobId,
                 state.totalPapers,
                 state.papersScanned,
                 state.documentsPrepared,
@@ -68,12 +94,17 @@ public class EmbeddingIngestionProgress {
                 state.startedAt,
                 state.updatedAt,
                 state.completedAt,
-                state.lastError
+                state.lastError,
+                state.providerRequests,
+                state.providerFailures,
+                state.lastPaperId,
+                state.lastProviderLatencyMillis
         );
     }
 
     public record Snapshot(
             String status,
+            UUID jobId,
             long totalPapers,
             long papersScanned,
             long documentsPrepared,
@@ -86,13 +117,18 @@ public class EmbeddingIngestionProgress {
             Instant startedAt,
             Instant updatedAt,
             Instant completedAt,
-            String lastError
+            String lastError,
+            long providerRequests,
+            long providerFailures,
+            Long lastPaperId,
+            long lastProviderLatencyMillis
     ) {
     }
 
     private static final class ProgressState {
 
         private String status;
+        private UUID jobId;
         private long totalPapers;
         private long papersScanned;
         private long documentsPrepared;
@@ -106,6 +142,10 @@ public class EmbeddingIngestionProgress {
         private Instant updatedAt;
         private Instant completedAt;
         private String lastError;
+        private long providerRequests;
+        private long providerFailures;
+        private Long lastPaperId;
+        private long lastProviderLatencyMillis;
 
         private static ProgressState idle() {
             var state = new ProgressState();
@@ -115,9 +155,14 @@ public class EmbeddingIngestionProgress {
         }
 
         private static ProgressState running(long totalPapers, String model, int dimension, int batchSize) {
+            return running(null, totalPapers, model, dimension, batchSize);
+        }
+
+        private static ProgressState running(UUID jobId, long totalPapers, String model, int dimension, int batchSize) {
             var now = Instant.now();
             var state = new ProgressState();
             state.status = "RUNNING";
+            state.jobId = jobId;
             state.totalPapers = totalPapers;
             state.model = model;
             state.dimension = dimension;

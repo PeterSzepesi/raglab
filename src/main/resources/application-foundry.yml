@@ -24,6 +24,11 @@ foundry:
   chat-deployment: ${AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT:gpt-5.6-luna}
   embedding-deployment: ${AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT:text-embedding-3-large}
   request-timeout: ${AZURE_AI_FOUNDRY_REQUEST_TIMEOUT:120s}
+  max-requests-per-minute: ${FOUNDRY_MAX_REQUESTS_PER_MINUTE:150}
+  max-tokens-per-minute: ${FOUNDRY_MAX_TOKENS_PER_MINUTE:150000}
+  max-retries: ${FOUNDRY_MAX_RETRIES:3}
+  retry-initial-backoff: ${FOUNDRY_RETRY_INITIAL_BACKOFF:1s}
+  retry-max-backoff: ${FOUNDRY_RETRY_MAX_BACKOFF:10s}
 
 embedding:
   ingestion:
@@ -31,6 +36,9 @@ embedding:
     model-name: ${AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT:text-embedding-3-large}
     dimensions: ${FOUNDRY_EMBEDDING_DIMENSIONS:1536}
     progress-log-interval: ${FOUNDRY_EMBEDDING_PROGRESS_LOG_INTERVAL:10}
+    provider-batch-size: ${FOUNDRY_EMBEDDING_PROVIDER_BATCH_SIZE:32}
+    provider-max-estimated-tokens: ${FOUNDRY_EMBEDDING_PROVIDER_MAX_ESTIMATED_TOKENS:100000}
+    provider-max-estimated-document-tokens: ${FOUNDRY_EMBEDDING_PROVIDER_MAX_ESTIMATED_DOCUMENT_TOKENS:7000}
 
 vector:
   store:

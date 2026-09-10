@@ -53,4 +53,28 @@ public class FoundryEmbeddingModel implements EmbeddingModelGateway {
         }
         return embedding;
     }
+
+    @Override
+    public List<List<Double>> embedBatch(List<RetrievalDocument> documents) {
+        if (documents == null || documents.isEmpty()) {
+            throw new IllegalArgumentException("documents must not be empty");
+        }
+        var embeddings = foundryClient.embed(
+                foundryProperties.getEmbeddingDeployment(),
+                documents.stream().map(RetrievalDocument::text).toList(),
+                dimensions()
+        );
+        if (embeddings.size() != documents.size()) {
+            throw new IllegalStateException("Foundry returned " + embeddings.size()
+                    + " embeddings for " + documents.size() + " input documents");
+        }
+        for (var embedding : embeddings) {
+            if (embedding.size() != dimensions()) {
+                throw new IllegalStateException("Foundry deployment " + modelName() + " returned " + embedding.size()
+                        + " dimensions, expected " + dimensions());
+            }
+        }
+        return embeddings;
+    }
+
 }

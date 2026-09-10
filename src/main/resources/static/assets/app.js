@@ -277,8 +277,12 @@ function renderEmbeddingStatusPage(page) {
                     <span>Total checkpoints</span>
                 </div>
                 <div class="metric">
-                    <strong>${escapeHtml(embeddingStatus.coveragePercent.toFixed(1))}%</strong>
-                    <span>Coverage</span>
+                    <strong>${escapeHtml(embeddingStatus.vectorRows)}</strong>
+                    <span>Vector rows</span>
+                </div>
+                <div class="metric">
+                    <strong>${escapeHtml(embeddingStatus.vectorCoveragePercent.toFixed(1))}%</strong>
+                    <span>Vector coverage</span>
                 </div>
                 <div class="metric">
                     <strong>${escapeHtml(jobStatus)}</strong>
@@ -295,6 +299,14 @@ function renderEmbeddingStatusPage(page) {
                     <strong>${escapeHtml(embeddingStatus.embeddingDimension)}</strong>
                 </div>
             </div>
+            <form class="job-controls" data-embedding-job-form>
+                <label>
+                    Bounded run size
+                    <input name="maxPapers" type="number" min="1" max="5000" value="25">
+                </label>
+                <button class="primary-button" type="submit">Start embedding job</button>
+                <button class="icon-button" type="button" data-embedding-job-cancel title="Cancel current embedding job" aria-label="Cancel current embedding job">&#9632;</button>
+            </form>
         `
         : `<p class="placeholder-copy">${embeddingStatusError ?? "Loading embedding checkpoint status..."}</p>`;
 
@@ -302,7 +314,7 @@ function renderEmbeddingStatusPage(page) {
         <div class="hero-grid">
             <div>
                 <h2>${page.title}</h2>
-                <p class="placeholder-copy">Embedding checkpointing and vector persistence are active. Run <code>embed-papers</code> with the foundry profile to upsert remote embeddings into pgvector, then use Search or <code>search-vector &lt;query&gt;</code> for retrieval testing.</p>
+                <p class="placeholder-copy">Embedding checkpointing and vector persistence are active. Use the bounded <code>embed-papers --max-papers=N</code> command or start a background job through the local API.</p>
                 <div class="health-panel ${embeddingStatusError ? "error" : ""}">
                     <div>
                         <span class="status-badge ${embeddingStatusError || jobStatus === "FAILED" ? "error" : jobStatus === "RUNNING" ? "working" : "ok"}">${embeddingStatusError ? "Unavailable" : escapeHtml(jobStatus)}</span>
@@ -333,6 +345,14 @@ function renderSearchPage(page) {
                     <label>
                         Results
                         <input name="topK" type="number" value="5" min="1" max="50">
+                    </label>
+                    <label>
+                        Search mode
+                        <select name="mode">
+                            <option value="semantic">Semantic (pgvector)</option>
+                            <option value="lexical">Lexical (PostgreSQL full text)</option>
+                            <option value="hybrid">Hybrid (semantic + lexical)</option>
+                        </select>
                     </label>
                     <label>
                         Category (optional)
@@ -412,6 +432,7 @@ async function submitSearch(form) {
             body: JSON.stringify({
                 query: formData.get("query"),
                 topK: Number(formData.get("topK")),
+                mode: formData.get("mode"),
                 category: formData.get("category") || null,
                 fromDate: formData.get("fromDate") || null,
                 toDate: formData.get("toDate") || null
@@ -425,7 +446,7 @@ async function submitSearch(form) {
         const searchResponse = await response.json();
         result.innerHTML = `
             <span class="status-badge ok">${searchResponse.results.length} result(s)</span>
-            <p class="placeholder-copy">Embedding model: ${escapeHtml(searchResponse.embeddingModel)}</p>
+            <p class="placeholder-copy">Mode: ${escapeHtml(searchResponse.mode)} · Backend: ${escapeHtml(searchResponse.embeddingModel)}</p>
             <div class="result-list">${searchResponse.results.map(resultItem => `
                 <article class="result-card">
                     <strong>${escapeHtml(resultItem.title)}</strong>
@@ -565,6 +586,38 @@ async function refreshEmbeddingStatus() {
     }
 }
 
+async function startEmbeddingJob(form) {
+    const maxPapers = Number(new FormData(form).get("maxPapers"));
+    try {
+        const response = await fetch("/api/embeddings/jobs", {
+            method: "POST",
+            headers: {"Accept": "application/json", "Content-Type": "application/json"},
+            body: JSON.stringify({maxPapers})
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error ?? `Embedding job endpoint returned ${response.status}`);
+        }
+        clearGlobalError();
+        await refreshEmbeddingStatus();
+    } catch (error) {
+        showGlobalError(`Could not start embedding job: ${error.message}`);
+    }
+}
+
+async function cancelEmbeddingJob() {
+    try {
+        const response = await fetch("/api/embeddings/jobs/current", {method: "DELETE", headers: {"Accept": "application/json"}});
+        if (!response.ok) {
+            throw new Error(`Embedding cancellation returned ${response.status}`);
+        }
+        clearGlobalError();
+        await refreshEmbeddingStatus();
+    } catch (error) {
+        showGlobalError(`Could not cancel embedding job: ${error.message}`);
+    }
+}
+
 window.addEventListener("hashchange", renderPage);
 window.addEventListener("error", () => {
     showGlobalError("Something went wrong in the demo UI. Refresh the page or retry the last action.");
@@ -585,6 +638,9 @@ pageContent.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-embedding-status-refresh]")) {
         refreshEmbeddingStatus();
     }
+    if (event.target instanceof Element && event.target.matches("[data-embedding-job-cancel]")) {
+        cancelEmbeddingJob();
+    }
 });
 pageContent.addEventListener("submit", (event) => {
     if (event.target instanceof HTMLFormElement && event.target.matches("[data-search-form]")) {
@@ -594,6 +650,10 @@ pageContent.addEventListener("submit", (event) => {
     if (event.target instanceof HTMLFormElement && event.target.matches("[data-chat-form]")) {
         event.preventDefault();
         submitChat(event.target);
+    }
+    if (event.target instanceof HTMLFormElement && event.target.matches("[data-embedding-job-form]")) {
+        event.preventDefault();
+        startEmbeddingJob(event.target);
     }
 });
 renderPage();

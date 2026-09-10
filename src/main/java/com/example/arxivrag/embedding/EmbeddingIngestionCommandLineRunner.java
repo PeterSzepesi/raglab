@@ -13,9 +13,16 @@ public class EmbeddingIngestionCommandLineRunner implements ApplicationRunner {
 
     private final ApplicationContext applicationContext;
 
-    public EmbeddingIngestionCommandLineRunner(EmbeddingIngestionService embeddingIngestionService, ApplicationContext applicationContext) {
+    private final EmbeddingIngestionProperties properties;
+
+    public EmbeddingIngestionCommandLineRunner(
+            EmbeddingIngestionService embeddingIngestionService,
+            ApplicationContext applicationContext,
+            EmbeddingIngestionProperties properties
+    ) {
         this.embeddingIngestionService = embeddingIngestionService;
         this.applicationContext = applicationContext;
+        this.properties = properties;
     }
 
     @Override
@@ -26,12 +33,14 @@ public class EmbeddingIngestionCommandLineRunner implements ApplicationRunner {
         }
 
         if (commandArgs.size() != 1) {
-            System.err.println("Usage: embed-papers");
+            System.err.println("Usage: embed-papers [--max-papers=N] [--from-paper-id=N] [--to-paper-id=N]"
+                    + " [--category=cs.AI] [--from-date=YYYY-MM-DD] [--to-date=YYYY-MM-DD] [--dry-run]");
             System.exit(SpringApplication.exit(applicationContext, () -> 2));
         }
 
         try {
-            var result = embeddingIngestionService.ingestAll();
+            var result = embeddingIngestionService.ingest(EmbeddingIngestionRequest.from(
+                    properties, args));
             System.out.print(result.formatSummary());
             System.out.flush();
             System.exit(SpringApplication.exit(applicationContext, () -> 0));

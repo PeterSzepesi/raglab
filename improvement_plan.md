@@ -4,6 +4,20 @@
 
 This plan starts from the currently working end-to-end path and describes how to make it safer, faster, easier to operate, and more useful without losing the project's learning value.
 
+## Implementation status
+
+The plan's local single-node core is now implemented through the following improvements:
+
+| Area | Implemented result |
+| --- | --- |
+| Ingestion operations | Bounded ID/date/category slices, seek pagination, dry-run mode, durable `embedding_jobs` history, live progress, cancellation API, non-web CLI mode, and a PostgreSQL advisory lock. |
+| Foundry throughput | Provider-sized batch requests, input-index validation, conservative token-aware batch planning, quota limiting, transient retry/backoff, and provider request counts. |
+| Persistence | Foundry calls occur outside database write transactions; vectors/checkpoints commit atomically per provider batch; PostgreSQL writes use JDBC batch upserts; checkpoint identity includes document schema version. |
+| Retrieval | Category/date filters are carried into vector-store queries; PostgreSQL full-text/trigram indexes are available; the search API/UI support semantic, lexical, and hybrid modes. |
+| Observability | Durable job status, vector/checkpoint coverage, Micrometer ingestion/search meters, Actuator metrics exposure, and UI controls for bounded background jobs. |
+
+The intentionally deferred items remain deferred: distributed workers, Milvus/Chroma comparison, PDF/full-text chunking, reranking, query rewriting, benchmark evaluation data, and production authentication/managed identity. Those require measured baselines or deployment decisions rather than being safe defaults for this local application.
+
 The immediate priority is to finish the current full embedding run. No schema reset or architectural rewrite is required before that run finishes. The later phases are deliberately ordered so that performance changes are measured against a known-good baseline rather than guessed at.
 
 ## Current baseline

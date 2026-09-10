@@ -19,6 +19,16 @@ public class FoundryProperties {
 
     private Duration requestTimeout = Duration.ofSeconds(120);
 
+    private int maxRequestsPerMinute = 150;
+
+    private int maxTokensPerMinute = 150_000;
+
+    private int maxRetries = 3;
+
+    private Duration retryInitialBackoff = Duration.ofSeconds(1);
+
+    private Duration retryMaxBackoff = Duration.ofSeconds(10);
+
     public String getEndpoint() {
         return endpoint;
     }
@@ -65,5 +75,45 @@ public class FoundryProperties {
 
     public void setRequestTimeout(Duration requestTimeout) {
         this.requestTimeout = requestTimeout;
+    }
+
+    public int getMaxRequestsPerMinute() {
+        return maxRequestsPerMinute;
+    }
+
+    public void setMaxRequestsPerMinute(int maxRequestsPerMinute) {
+        this.maxRequestsPerMinute = maxRequestsPerMinute;
+    }
+
+    public int getMaxTokensPerMinute() {
+        return maxTokensPerMinute;
+    }
+
+    public void setMaxTokensPerMinute(int maxTokensPerMinute) {
+        this.maxTokensPerMinute = maxTokensPerMinute;
+    }
+
+    public int getMaxRetries() {
+        return maxRetries;
+    }
+
+    public void setMaxRetries(int maxRetries) {
+        this.maxRetries = maxRetries;
+    }
+
+    public Duration getRetryInitialBackoff() {
+        return retryInitialBackoff;
+    }
+
+    public void setRetryInitialBackoff(Duration retryInitialBackoff) {
+        this.retryInitialBackoff = retryInitialBackoff;
+    }
+
+    public Duration getRetryMaxBackoff() {
+        return retryMaxBackoff;
+    }
+
+    public void setRetryMaxBackoff(Duration retryMaxBackoff) {
+        this.retryMaxBackoff = retryMaxBackoff;
     }
 }

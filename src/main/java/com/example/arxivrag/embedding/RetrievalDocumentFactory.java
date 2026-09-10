@@ -13,6 +13,8 @@ import java.util.regex.Pattern;
 @Component
 public class RetrievalDocumentFactory {
 
+    public static final String DOCUMENT_SCHEMA_VERSION = "title-abstract-v1";
+
     public static final String CHUNK_ID = "title-abstract";
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");

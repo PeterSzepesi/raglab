@@ -401,6 +401,21 @@ Status:
 - Implemented in the existing static UI. Search calls `POST /api/search`; Chat calls `POST /api/chat` and renders answers, citations, and tool traces.
 - Run the `foundry` profile after importing and embedding a small corpus to test the complete local-browser-to-Foundry path.
 
+## Improvement plan implementation status
+
+The post-Step-9 improvement core is implemented in the current branch:
+
+- Embedding jobs accept bounded paper limits, ID/date/category slices, and dry-run mode.
+- CLI jobs run in a non-web Spring context and use a PostgreSQL advisory lock (or a JVM lock on H2) to reject duplicate workers.
+- `embedding_jobs` stores durable job status and counters; `/api/embeddings/status` also reports vector-row coverage, and `/api/embeddings/jobs` provides local background start/status/cancel controls.
+- Foundry embeddings are sent as input arrays. Batch size is separate from database page size, with conservative estimated-token planning, quota limiting, transient retry/backoff, and response-index validation.
+- Provider calls happen outside database transactions. Each provider batch is committed as one vector/checkpoint write transaction, with PostgreSQL JDBC batch upserts.
+- Checkpoint identity includes the retrieval-document schema version so formatter changes cannot silently reuse incompatible work.
+- Vector search carries category/date filters into the vector-store gateway. PostgreSQL adds full-text and trigram indexes; `POST /api/search` accepts semantic, lexical, and hybrid modes.
+- Micrometer ingestion/search meters are exposed through `/actuator/metrics`; the static UI shows vector coverage and can launch a bounded background job.
+
+Still intentionally deferred are distributed workers, Milvus/Chroma comparison, PDF/full-text chunking, reranking/query rewriting, benchmark evaluation data, and production authentication/managed identity.
+
 ## Step 10 — Add Milvus And Chroma
 
 Objective:

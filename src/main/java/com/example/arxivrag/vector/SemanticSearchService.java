@@ -5,6 +5,7 @@ import com.example.arxivrag.embedding.RetrievalDocumentFactory;
 import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Map;
 import java.util.function.Function;
@@ -16,6 +17,8 @@ public class SemanticSearchService {
 
     public static final int DEFAULT_TOP_K = 10;
 
+    private static final int MAX_QUERY_LENGTH = 4000;
+
     private final EmbeddingModelGateway embeddingModel;
 
     private final RetrievalDocumentFactory retrievalDocumentFactory;
@@ -24,16 +27,30 @@ public class SemanticSearchService {
 
     private final PaperRepository paperRepository;
 
+    private final SearchMetrics metrics;
+
     public SemanticSearchService(
             EmbeddingModelGateway embeddingModel,
             RetrievalDocumentFactory retrievalDocumentFactory,
             VectorStoreGateway vectorStoreGateway,
             PaperRepository paperRepository
     ) {
+        this(embeddingModel, retrievalDocumentFactory, vectorStoreGateway, paperRepository, null);
+    }
+
+    @Autowired
+    public SemanticSearchService(
+            EmbeddingModelGateway embeddingModel,
+            RetrievalDocumentFactory retrievalDocumentFactory,
+            VectorStoreGateway vectorStoreGateway,
+            PaperRepository paperRepository,
+            SearchMetrics metrics
+    ) {
         this.embeddingModel = embeddingModel;
         this.retrievalDocumentFactory = retrievalDocumentFactory;
         this.vectorStoreGateway = vectorStoreGateway;
         this.paperRepository = paperRepository;
+        this.metrics = metrics;
     }
 
     public java.util.List<SemanticSearchResult> search(String query) {
@@ -55,8 +72,33 @@ public class SemanticSearchService {
             LocalDate fromDate,
             LocalDate toDate
     ) {
+        var timer = metrics == null ? null : metrics.start();
+        try {
+            return searchInternal(query, topK, category, fromDate, toDate);
+        } catch (RuntimeException exception) {
+            if (metrics != null) {
+                metrics.failure();
+            }
+            throw exception;
+        } finally {
+            if (timer != null) {
+                metrics.stop(timer);
+            }
+        }
+    }
+
+    private java.util.List<SemanticSearchResult> searchInternal(
+            String query,
+            int topK,
+            String category,
+            LocalDate fromDate,
+            LocalDate toDate
+    ) {
         if (query == null || query.isBlank()) {
             throw new IllegalArgumentException("query must not be blank");
+        }
+        if (query.length() > MAX_QUERY_LENGTH) {
+            throw new IllegalArgumentException("query must not exceed " + MAX_QUERY_LENGTH + " characters");
         }
         if (topK <= 0) {
             throw new IllegalArgumentException("topK must be greater than zero");
@@ -81,7 +123,10 @@ public class SemanticSearchService {
         var vectorHits = vectorStoreGateway.search(new VectorSearchRequest(
                 embeddingModel.modelName(),
                 queryEmbedding,
-                retrievalLimit
+                retrievalLimit,
+                category,
+                fromDate,
+                toDate
         ));
         if (vectorHits.isEmpty()) {
             return java.util.List.of();

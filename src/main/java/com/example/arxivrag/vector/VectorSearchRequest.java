@@ -1,12 +1,20 @@
 package com.example.arxivrag.vector;
 
 import java.util.List;
+import java.time.LocalDate;
 
 public record VectorSearchRequest(
         String embeddingModel,
         List<Double> embedding,
-        int topK
+        int topK,
+        String category,
+        LocalDate fromDate,
+        LocalDate toDate
 ) {
+
+    public VectorSearchRequest(String embeddingModel, List<Double> embedding, int topK) {
+        this(embeddingModel, embedding, topK, null, null, null);
+    }
 
     public VectorSearchRequest {
         if (embeddingModel == null || embeddingModel.isBlank()) {
@@ -20,6 +28,12 @@ public record VectorSearchRequest(
         }
         if (topK <= 0) {
             throw new IllegalArgumentException("topK must be greater than zero");
+        }
+        if (category != null && category.isBlank()) {
+            throw new IllegalArgumentException("category must not be blank");
+        }
+        if (fromDate != null && toDate != null && fromDate.isAfter(toDate)) {
+            throw new IllegalArgumentException("fromDate must not be after toDate");
         }
         embedding = List.copyOf(embedding);
     }
