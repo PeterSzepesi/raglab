@@ -218,7 +218,7 @@ com.example.arxivrag
     └── pgvector
 ```
 
-The current working tree contains executable paper, arXiv import, resumable Foundry embedding jobs, pgvector upsert/search, semantic/lexical/hybrid search, local retrieval tools, profile-scoped AI Foundry chat/embedding adapters, grounded chat, and the static UI.
+The current working tree contains executable paper, arXiv import, resumable Foundry embedding jobs, pgvector upsert/search, semantic/lexical/hybrid search, local retrieval tools, profile-scoped AI Foundry chat/embedding adapters, grounded chat with clickable arXiv citations, and the static UI.
 
 Useful endpoints:
 

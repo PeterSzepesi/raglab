@@ -45,6 +45,7 @@ class GroundedChatServiceTests {
 
         assertThat(response.answer()).contains("2401.00001");
         assertThat(response.citations()).containsExactly(citation);
+        assertThat(response.citations().getFirst().url()).isEqualTo("https://arxiv.org/abs/2401.00001");
         assertThat(response.toolsUsed()).containsExactly("semantic_search");
     }
 }

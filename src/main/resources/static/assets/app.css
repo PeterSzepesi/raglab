@@ -496,6 +496,28 @@ h2 {
     color: var(--accent-strong);
 }
 
+.citation-link {
+    width: fit-content;
+    font-weight: 650;
+}
+
+.citation-link:hover,
+.citation-link:focus-visible {
+    text-decoration: underline;
+    text-underline-offset: 0.18rem;
+}
+
+.citation-link:focus-visible {
+    border-radius: 0.2rem;
+    outline: 2px solid var(--accent);
+    outline-offset: 0.2rem;
+}
+
+.external-link-icon {
+    margin-left: 0.3rem;
+    font-size: 0.8em;
+}
+
 .preview-form input:focus,
 .preview-form textarea:focus,
 .preview-form select:focus {

@@ -121,6 +121,7 @@ public class RetrievalToolService {
             var row = new LinkedHashMap<String, Object>();
             row.put("paperId", result.paperId());
             row.put("arxivId", result.arxivId());
+            row.put("url", ChatCitation.arxivUrlFor(result.arxivId()));
             row.put("title", result.title());
             row.put("abstractText", truncate(result.abstractText()));
             row.put("categories", result.categories());
@@ -135,6 +136,7 @@ public class RetrievalToolService {
             var row = new LinkedHashMap<String, Object>();
             row.put("paperId", paper.getId());
             row.put("arxivId", paper.getArxivId());
+            row.put("url", ChatCitation.arxivUrlFor(paper.getArxivId()));
             row.put("title", paper.getTitle());
             row.put("abstractText", truncate(paper.getAbstractText()));
             row.put("categories", paper.getCategories());

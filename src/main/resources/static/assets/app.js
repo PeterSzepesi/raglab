@@ -88,6 +88,30 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
+function safeArxivCitationUrl(citation) {
+    const arxivId = String(citation?.arxivId ?? "").trim();
+    const candidate = citation?.url ?? `https://arxiv.org/abs/${arxivId}`;
+    try {
+        const url = new URL(candidate);
+        if (url.protocol !== "https:" || url.hostname !== "arxiv.org" || !url.pathname.startsWith("/abs/")) {
+            return null;
+        }
+        return url.href;
+    } catch {
+        return null;
+    }
+}
+
+function renderChatCitation(citation) {
+    const score = citation.score == null ? "" : ` · score ${Number(citation.score).toFixed(3)}`;
+    const label = `[arXiv:${escapeHtml(citation.arxivId)}] ${escapeHtml(citation.title)}${score}`;
+    const url = safeArxivCitationUrl(citation);
+    if (!url) {
+        return `<span class="citation">${label}</span>`;
+    }
+    return `<a class="citation citation-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open cited paper on arXiv">${label}<span class="external-link-icon" aria-hidden="true">↗</span></a>`;
+}
+
 function formatCheckedAt(value) {
     return value ? new Date(value).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "Not checked yet";
 }
@@ -384,9 +408,7 @@ function renderChatPage(page) {
         ? `<p class="placeholder-copy">Ask a question about the imported papers. The model will request local retrieval tools before answering.</p>`
         : chatTranscript.map(entry => {
             const citations = entry.citations?.length
-                ? `<div class="citation-list"><strong>Sources</strong>${entry.citations.map(citation => `
-                    <span class="citation">[arXiv:${escapeHtml(citation.arxivId)}] ${escapeHtml(citation.title)}${citation.score == null ? "" : ` · score ${Number(citation.score).toFixed(3)}`}</span>
-                `).join("")}</div>`
+                ? `<div class="citation-list"><strong>Sources</strong>${entry.citations.map(renderChatCitation).join("")}</div>`
                 : "";
             const tools = entry.toolsUsed?.length
                 ? `<small class="tool-trace">Tools: ${entry.toolsUsed.map(escapeHtml).join(", ")}</small>`
