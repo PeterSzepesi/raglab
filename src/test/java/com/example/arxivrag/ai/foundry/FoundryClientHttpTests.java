@@ -7,6 +7,14 @@ import tools.jackson.databind.ObjectMapper;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpHeaders;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.List;
 import java.util.Map;
 
@@ -99,6 +107,100 @@ class FoundryClientHttpTests {
                 .hasMessageNotContaining("secret system prompt");
     }
 
+    @Test
+    void parsesUsageAndPrefersApimRequestId() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var response = response(200, "{\"choices\":[{\"message\":{\"content\":\"answer\"}}],"
+                + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4,\"total_tokens\":14,"
+                + "\"prompt_tokens_details\":{\"cached_tokens\":2},"
+                + "\"completion_tokens_details\":{\"reasoning_tokens\":1}}}");
+        when(response.headers()).thenReturn(HttpHeaders.of(
+                Map.of("apim-request-id", List.of("apim-123"), "x-request-id", List.of("x-ignored")),
+                (name, value) -> true));
+        doReturn(response).when(httpClient).send(any(HttpRequest.class), any());
+
+        var result = new FoundryClient(properties(), new ObjectMapper(), httpClient)
+                .chatWithTools("gpt-5.6-luna", List.of(Map.of("role", "user", "content", "question")), List.of());
+
+        assertThat(result.metadata().promptTokens()).isEqualTo(10);
+        assertThat(result.metadata().completionTokens()).isEqualTo(4);
+        assertThat(result.metadata().reasoningTokens()).isEqualTo(1);
+        assertThat(result.metadata().cachedPromptTokens()).isEqualTo(2);
+        assertThat(result.metadata().requestId()).isEqualTo("apim-123");
+    }
+
+    @Test
+    void streamingEmitsDeltasAndParsesFinalUsageAsynchronously() {
+        var httpClient = mock(HttpClient.class);
+        var stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Grounded \"}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{\"content\":\"answer.\"}}]}\n\n"
+                + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,"
+                + "\"total_tokens\":11}}\n\ndata: [DONE]\n\n";
+        var response = streamResponse(200, stream, Map.of("apim-request-id", List.of("stream-123")));
+        doReturn(CompletableFuture.completedFuture(response)).when(httpClient)
+                .sendAsync(any(HttpRequest.class), any());
+        var emitted = new AtomicReference<>("");
+
+        var result = new FoundryClient(properties(), new ObjectMapper(), httpClient)
+                .streamChat("gpt-5.6-luna", List.of(Map.of("role", "user", "content", "question")),
+                        new FoundryClient.FoundryChatOptions(100, null),
+                        delta -> emitted.updateAndGet(value -> value + delta));
+
+        assertThat(emitted.get()).isEqualTo("Grounded answer.");
+        assertThat(result.content()).isEqualTo("Grounded answer.");
+        assertThat(result.metadata().promptTokens()).isEqualTo(9);
+        assertThat(result.metadata().completionTokens()).isEqualTo(2);
+        assertThat(result.metadata().requestId()).isEqualTo("stream-123");
+    }
+
+    @Test
+    void streamingRetriesThrottleBeforeAnyDeltaIsEmitted() {
+        var httpClient = mock(HttpClient.class);
+        var throttled = streamResponse(429, "busy", Map.of("retry-after", List.of("0")));
+        var success = streamResponse(200,
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+                        + "data: [DONE]\n\n", Map.of());
+        doReturn(CompletableFuture.completedFuture(throttled), CompletableFuture.completedFuture(success))
+                .when(httpClient).sendAsync(any(HttpRequest.class), any());
+
+        var result = new FoundryClient(properties(), new ObjectMapper(), httpClient)
+                .streamChat("gpt-5.6-luna", List.of(Map.of("role", "user", "content", "question")),
+                        FoundryClient.FoundryChatOptions.defaults(), ignored -> { });
+
+        assertThat(result.content()).isEqualTo("ok");
+        assertThat(result.metadata().retryCount()).isEqualTo(1);
+    }
+
+    @Test
+    void cancellingStreamingTaskCancelsRequestBeforeResponseHeadersArrive() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var providerFuture = new CompletableFuture<HttpResponse<java.io.InputStream>>();
+        var providerCancelled = new CountDownLatch(1);
+        providerFuture.whenComplete((ignored, failure) -> {
+            if (providerFuture.isCancelled()) {
+                providerCancelled.countDown();
+            }
+        });
+        var requestStarted = new CountDownLatch(1);
+        when(httpClient.sendAsync(any(HttpRequest.class), any())).thenAnswer(invocation -> {
+            requestStarted.countDown();
+            return providerFuture;
+        });
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var task = executor.submit(() -> new FoundryClient(properties(), new ObjectMapper(), httpClient)
+                    .streamChat("gpt-5.6-luna", List.of(Map.of("role", "user", "content", "question")),
+                            FoundryClient.FoundryChatOptions.defaults(), ignored -> { }));
+            assertThat(requestStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+            task.cancel(true);
+
+            assertThat(providerCancelled.await(1, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private static FoundryProperties properties() {
         var properties = new FoundryProperties();
         properties.setEndpoint("https://models-for-peter-resource.services.ai.azure.com");
@@ -111,6 +213,15 @@ class FoundryClientHttpTests {
         var response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(status);
         when(response.body()).thenReturn(body);
+        return response;
+    }
+
+    private static HttpResponse<java.io.InputStream> streamResponse(
+            int status, String body, Map<String, List<String>> headers) {
+        var response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(status);
+        when(response.body()).thenReturn(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+        when(response.headers()).thenReturn(HttpHeaders.of(headers, (name, value) -> true));
         return response;
     }
 

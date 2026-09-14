@@ -199,6 +199,87 @@ GET /
 
 Frontend assets live under `src/main/resources/static` and are packaged into the backend artifact by Maven's standard resource handling. There is intentionally no separate frontend build step yet.
 
+### Fast grounded-chat path
+
+The Foundry profile now uses `pre-retrieval` by default. Spring first chooses a local retrieval route, builds a bounded evidence packet, and makes one answer-generation request to Foundry:
+
+```text
+question -> exact-ID / relational / semantic / hybrid retrieval
+         -> bounded cited evidence
+         -> one streamed Foundry answer
+```
+
+An exact arXiv ID goes directly to PostgreSQL and does not consume an embedding request. Structured category/date fields use relational retrieval. Ordinary questions use semantic retrieval; the UI can explicitly select lexical or parallel hybrid retrieval. The legacy model-selected tool flow remains available through the UI's **Agentic tool mode** option or `RAG_CHAT_ORCHESTRATION_MODE=agentic`.
+
+Start the application and open `http://localhost:8080/#/chat`:
+
+```powershell
+java -jar target\arxiv-rag-0.0.1-SNAPSHOT.jar `
+  --spring.profiles.active=foundry
+```
+
+The UI first displays retrieval status and clickable citations, then appends Foundry answer tokens as they arrive. Cancelling or navigating away interrupts the server-side streaming task. `POST /api/chat` remains the non-streaming compatibility API; `POST /api/chat/stream` emits `retrieval`, `citations`, `delta`, `complete`, and `error` SSE events.
+
+Important chat settings and their defaults are:
+
+| Environment variable | Default | Purpose |
+| --- | ---: | --- |
+| `RAG_CHAT_ORCHESTRATION_MODE` | `pre-retrieval` | `pre-retrieval` or legacy `agentic` orchestration |
+| `RAG_CHAT_RETRIEVAL_TOP_K` | `4` | Maximum evidence papers |
+| `RAG_CHAT_MAX_CONTEXT_PER_PAPER` | `800` | Per-paper character budget |
+| `RAG_CHAT_MAX_CONTEXT_TOTAL` | `4000` | Aggregate evidence character budget |
+| `RAG_CHAT_MAX_COMPLETION_TOKENS` | `400` | Foundry completion ceiling |
+| `RAG_CHAT_CACHE_TTL` | `10m` | Query-embedding and retrieval cache lifetime |
+| `RAG_CHAT_CACHE_MAXIMUM_SIZE` | `1000` | Bounded in-process cache size |
+| `RAG_CHAT_MAX_PARALLEL_TOOL_CALLS` | `3` | Agentic tool concurrency limit |
+| `FOUNDRY_CHAT_MAX_QUOTA_WAIT` | `2s` | Interactive chat's local queue-wait ceiling |
+| `FOUNDRY_QUERY_EMBEDDING_MAX_QUOTA_WAIT` | `2s` | Interactive query-embedding wait ceiling |
+| `FOUNDRY_INGESTION_EMBEDDING_MAX_QUOTA_WAIT` | `60s` | Offline ingestion wait ceiling |
+
+Optional `RAG_CHAT_BENCHMARK_INPUT_PRICE_PER_MILLION`, `RAG_CHAT_BENCHMARK_CACHED_INPUT_PRICE_PER_MILLION`, and `RAG_CHAT_BENCHMARK_OUTPUT_PRICE_PER_MILLION` values add an estimated USD cost per request to benchmark reports. They are intentionally unset by default because Foundry pricing varies by model, deployment type, region, and date.
+
+The chat and embedding deployments have independent local RPM/TPM settings. Background embedding reserves 10 RPM and 10,000 TPM for interactive query embeddings by default. The reservation affects only local scheduling; Azure remains the final authority on quota.
+
+### Chat diagnostics and PostgreSQL plans
+
+Every non-streaming response includes `X-Request-ID` and `Server-Timing`. Micrometer publishes bounded-cardinality metrics under `rag.chat.*`, `rag.foundry.*`, and `rag.search.*`, including end-to-end latency, retrieval/model stages, TTFT, tokens, retries, quota waits, and cache statistics. Inspect a metric through Actuator, for example:
+
+```text
+GET /actuator/metrics/rag.chat.latency
+GET /actuator/metrics/rag.chat.ttft
+GET /actuator/metrics/rag.foundry.quota.wait
+GET /actuator/metrics/cache.gets?tag=cache:rag.chat.retrieval.cache
+GET /actuator/metrics/cache.gets?tag=cache:rag.search.query.embedding.cache
+```
+
+To enable the local-only vector-plan diagnostic, set `RAG_CHAT_DEBUG_TIMINGS=true`, restart, and call:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8080/api/search/diagnostics/vector-plan `
+  -ContentType application/json `
+  -Body '{"query":"neural retrieval","topK":10,"mode":"semantic"}'
+```
+
+It runs `EXPLAIN (ANALYZE, BUFFERS)` for the real pgvector query and reports query-embedding and database timing separately. Successful bulk embedding runs also issue `ANALYZE papers` and `ANALYZE paper_embeddings`; an ANALYZE failure is logged but never rolls back or marks already-persisted embeddings as failed.
+
+### Repeatable chat benchmark and model A/B testing
+
+The version-controlled evaluation set at `benchmarks/chat-evaluation.jsonl` contains 30 exact-ID, semantic, lexical, filtered, repeated, no-evidence, comparison, and multi-step cases. Run a bounded benchmark after packaging:
+
+```powershell
+java -jar target\arxiv-rag-0.0.1-SNAPSHOT.jar `
+  --spring.profiles.active=foundry `
+  chat-benchmark benchmarks\chat-evaluation.jsonl `
+  --variant=pre-retrieval `
+  --deployment=primary `
+  --max-questions=30
+```
+
+Supported variants are `agentic`, `pre-retrieval`, and `streaming`. The report is written to `target/chat-benchmark-results.json` with per-case latency, TTFT, generated-token throughput, prompt/completion/reasoning/cached tokens, optional configured cost, Foundry-call and retry counts, cited IDs, quality gates, and deployment-level p50/p90/p95 summaries. Running it calls the live deployments and consumes their quota.
+
+To compare a separately provisioned candidate deployment without replacing the current model, set `AZURE_AI_FOUNDRY_CANDIDATE_CHAT_DEPLOYMENT` and use `--deployment=candidate` or `--deployment=both`. Model provisioning remains an Azure operation and is intentionally not automated by this application. A model switch is then only a configuration change. The embedding deployment is not A/B switched here: changing it requires side-by-side vectors or full re-embedding because query and corpus vectors must use the same model and dimensions.
+
 Safe runtime configuration is exposed at:
 
 ```text
@@ -225,6 +306,8 @@ Useful endpoints:
 ```text
 POST /api/search
 POST /api/chat                         # foundry profile
+POST /api/chat/stream                  # foundry profile, Server-Sent Events
+POST /api/search/diagnostics/vector-plan # only when chat.debug-timings=true
 GET  /api/embeddings/status
 POST /api/embeddings/jobs              # bounded background job
 GET  /api/embeddings/jobs/latest
@@ -257,7 +340,7 @@ The app shell includes navigation and placeholder pages for:
 
 ## Deferred improvement tickets
 
-1. Add a fixed retrieval evaluation set and exact-versus-HNSW recall measurements.
+1. Add exact-versus-HNSW recall measurement to the existing fixed chat evaluation set.
 2. Add reranking and richer PDF/full-text chunking only when evaluation justifies them.
 3. Add Milvus/Chroma adapters and benchmark comparison using the same corpus and query set.
 4. Add production authentication, managed identity, backups, and deployment hardening.

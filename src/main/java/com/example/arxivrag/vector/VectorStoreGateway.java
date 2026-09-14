@@ -16,4 +16,11 @@ public interface VectorStoreGateway {
     List<VectorSearchResult> search(VectorSearchRequest request);
 
     long countByEmbeddingModel(String embeddingModel);
+
+    default List<String> explain(VectorSearchRequest request) {
+        return List.of("EXPLAIN is not supported by the active vector store");
+    }
+
+    default void analyze() {
+    }
 }

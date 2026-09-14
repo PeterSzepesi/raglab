@@ -2,6 +2,7 @@ package com.example.arxivrag.arxiv;
 
 import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
+import com.example.arxivrag.search.CorpusGeneration;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -30,13 +31,16 @@ public class ArxivImportService {
 
     private final TransactionTemplate transactionTemplate;
 
+    private final CorpusGeneration corpusGeneration;
+
     public ArxivImportService(
             ArxivDatasetReader datasetReader,
             ArxivRecordFilter recordFilter,
             PaperMapper paperMapper,
             PaperRepository paperRepository,
             ArxivImportProperties properties,
-            TransactionTemplate transactionTemplate
+            TransactionTemplate transactionTemplate,
+            CorpusGeneration corpusGeneration
     ) {
         this.datasetReader = datasetReader;
         this.recordFilter = recordFilter;
@@ -44,6 +48,7 @@ public class ArxivImportService {
         this.paperRepository = paperRepository;
         this.properties = properties;
         this.transactionTemplate = transactionTemplate;
+        this.corpusGeneration = corpusGeneration;
     }
 
     public ArxivImportResult importDataset(Path datasetPath) {
@@ -86,7 +91,7 @@ public class ArxivImportService {
 
         flush(state);
 
-        return new ArxivImportResult(
+        var result = new ArxivImportResult(
                 readResult.recordsRead(),
                 state.accepted,
                 state.imported,
@@ -95,6 +100,10 @@ public class ArxivImportService {
                 readResult.invalidRecords() + state.invalidRecords,
                 Duration.between(startedAt, Instant.now())
         );
+        if (result.imported() + result.updated() > 0) {
+            corpusGeneration.increment();
+        }
+        return result;
     }
 
     void flush(ImportState state) {

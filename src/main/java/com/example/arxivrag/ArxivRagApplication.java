@@ -21,6 +21,7 @@ public class ArxivRagApplication {
                 "embed-papers".equals(argument)
                         || "import-arxiv".equals(argument)
                         || "chat-model".equals(argument)
+                        || "chat-benchmark".equals(argument)
                         || "search-vector".equals(argument));
     }
 }

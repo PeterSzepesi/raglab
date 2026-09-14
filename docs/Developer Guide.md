@@ -29,7 +29,10 @@ Implemented:
 - store-neutral vector contracts, in-memory search, pgvector persistence, and the `search-vector <query>` CLI;
 - profile-scoped Microsoft AI Foundry chat/embedding HTTP adapters and the `chat-model <question>` smoke command;
 - `POST /api/search` with semantic search and category/date filters;
-- `POST /api/chat` with bounded Foundry tool calling, local semantic/relational retrieval, and citations;
+- one-call pre-retrieval grounded chat plus optional bounded Foundry tool calling;
+- streaming and non-streaming chat APIs with safe clickable citations;
+- stage/provider metrics, separated quota scheduling, bounded Caffeine caches, and pgvector diagnostics;
+- a 30-case chat latency/quality benchmark with candidate-deployment A/B support;
 - static Search and Chat pages wired to the backend;
 - JUnit/Spring Boot tests;
 - GitHub Actions CI;
@@ -39,7 +42,7 @@ Not implemented yet:
 
 - Spring AI replacement of the current direct tool-loop adapter;
 - Milvus/Chroma adapters;
-- benchmark runner.
+- Milvus/Chroma benchmark runner (the chat benchmark is implemented).
 
 ## Build And Test
 
@@ -166,11 +169,11 @@ After import and embedding succeed, keep PostgreSQL running and start the backen
 Open `http://localhost:8080/#/chat`. Type a question about the imported corpus. The request sequence is:
 
 ```text
-Browser -> POST /api/chat -> local Spring Boot
-        -> Foundry chat deployment
-        -> local retrieval tool (pgvector/PostgreSQL)
-        -> Foundry chat deployment with bounded evidence
-        -> browser with answer, citations, and tool trace
+Browser -> POST /api/chat/stream -> local Spring Boot
+        -> local retrieval planner (pgvector/PostgreSQL)
+        -> bounded evidence and clickable citations
+        -> one streamed Foundry answer call
+        -> browser receives answer deltas and completion metadata
 ```
 
 The browser never sees the Foundry API key. If the chat page reports no evidence, first check that the import command created papers and that `embed-papers` completed with the `foundry` profile. If the provider returns an authentication or route error, check the rotated key and the exact request shown by the Foundry Code tab.
@@ -384,10 +387,11 @@ Follow `docs/implementation_steps.txt`. The short version:
 6. Add embedding checkpointing.
 7. Finish pgvector search and vector-ingestion wiring. (Completed.)
 8. Connect Microsoft AI Foundry chat and embedding deployments through the `foundry` profile. (Implemented.)
-9. Add the semantic search API, local semantic/relational retrieval tools, and grounded chat APIs.
-10. Wire the UI.
-11. Add Milvus/Chroma.
-12. Add benchmark reporting.
+9. Add the semantic search API, local semantic/relational retrieval tools, and grounded chat APIs. (Implemented.)
+10. Wire the UI. (Implemented, including streaming and cancellation.)
+11. Optimize chat orchestration, quotas, context, caching, parallel retrieval, and telemetry. (Implemented.)
+12. Add repeatable chat benchmark reporting and candidate model comparison. (Implemented.)
+13. Add Milvus/Chroma and their store-comparison benchmark. (Deferred.)
 
 ## Documentation Discipline
 

@@ -4,6 +4,7 @@ import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
 import com.example.arxivrag.vector.EmbeddedDocument;
 import com.example.arxivrag.vector.VectorStoreGateway;
+import com.example.arxivrag.search.CorpusGeneration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -34,6 +35,7 @@ public class EmbeddingIngestionService {
     private final EmbeddingJobRepository jobRepository;
     private final EmbeddingJobLock jobLock;
     private final EmbeddingMetrics metrics;
+    private final CorpusGeneration corpusGeneration;
 
     public EmbeddingIngestionService(
             PaperRepository paperRepository,
@@ -46,7 +48,8 @@ public class EmbeddingIngestionService {
             EmbeddingIngestionProgress progress,
             EmbeddingJobRepository jobRepository,
             EmbeddingJobLock jobLock,
-            EmbeddingMetrics metrics
+            EmbeddingMetrics metrics,
+            CorpusGeneration corpusGeneration
     ) {
         this.paperRepository = paperRepository;
         this.retrievalDocumentFactory = retrievalDocumentFactory;
@@ -59,6 +62,7 @@ public class EmbeddingIngestionService {
         this.jobRepository = jobRepository;
         this.jobLock = jobLock;
         this.metrics = metrics;
+        this.corpusGeneration = corpusGeneration;
     }
 
     public EmbeddingIngestionResult ingestAll() {
@@ -121,6 +125,15 @@ public class EmbeddingIngestionService {
             progress.complete();
             jobRepository.complete(jobId, progress.snapshot());
             var elapsed = Duration.between(startedAt, Instant.now());
+            if (state.embedded > 0) {
+                corpusGeneration.increment();
+                try {
+                    vectorStoreGateway.analyze();
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("Embedding data is persisted, but post-ingestion ANALYZE failed: {}",
+                            exception.getMessage());
+                }
+            }
             LOGGER.info("Embedding job {} complete: scanned={}, embedded={}, skipped={}, providerRequests={}, elapsedSeconds={}",
                     jobId, state.papersScanned, state.embedded, state.skipped, state.providerRequests,
                     elapsed.toMillis() / 1000.0);

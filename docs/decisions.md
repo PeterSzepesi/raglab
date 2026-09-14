@@ -129,8 +129,8 @@ PostgreSQL `papers` table.
 Application and data placement:
 The frontend, Spring Boot application, PostgreSQL database, and selected vector store run locally. AI Foundry hosts the remote chat and embedding model deployments. The local application calls AI Foundry over outbound APIs; AI Foundry does not receive database credentials or direct database access.
 
-Tool execution:
-The chat model receives narrow tool definitions such as semantic search, relational paper search, and paper lookup. When the model requests a tool, the local application validates the arguments, executes the tool against local PostgreSQL or the local vector store, and sends a bounded result back to the model. The model requests retrieval; the application performs retrieval.
+Chat retrieval and tool execution:
+The normal `pre-retrieval` path deterministically chooses exact-ID, relational, semantic, or hybrid retrieval inside the local application and sends bounded evidence to one Foundry answer call. This avoids paying for a remote tool-selection call on ordinary RAG questions. The optional `agentic` path exposes narrow semantic-search, relational-search, and paper-lookup definitions to the chat model. When the model requests a tool, the local application validates and executes it with bounded concurrency and context. In both paths, the application performs retrieval and the model never receives database access.
 
 ## Technology Recommendations
 
@@ -140,6 +140,8 @@ The chat model receives narrow tool definitions such as semantic search, relatio
 - Use Testcontainers when adding database behavior. Manual Docker-only tests are useful, but they are not enough for repeatable CI.
 - Add an offline deterministic embedding profile before live AI Foundry calls. This avoids blocking importer, vector-store, and UI work on API keys or model availability.
 - Keep retrieval tools application-owned and narrowly scoped. Do not allow the remote model to submit arbitrary SQL or access the local database directly.
+- Cache only embeddings and retrieval results, not generated answers. Include model/schema/filter/corpus-generation identity in cache keys.
+- Keep primary and candidate Foundry deployment names separate so A/B tests and rollback are configuration-only operations.
 
 ## Non-Goals For The First End-To-End Slice
 

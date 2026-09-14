@@ -144,6 +144,43 @@ public class PgVectorStoreGateway implements VectorStoreGateway {
         return count == null ? 0L : count;
     }
 
+    @Override
+    public List<String> explain(VectorSearchRequest request) {
+        var sql = new StringBuilder("""
+                explain (analyze, buffers, format text)
+                select paper_id, arxiv_id, chunk_id, content_hash, embedding_model,
+                       1 - (embedding <=> ?::vector) as score, text
+                from paper_embeddings
+                where embedding_model = ?
+                """);
+        var parameters = new java.util.ArrayList<Object>();
+        parameters.add(vectorLiteral(request.embedding()));
+        parameters.add(request.embeddingModel());
+        if (request.category() != null) {
+            sql.append(" and ? = any(categories) ");
+            parameters.add(request.category());
+        }
+        if (request.fromDate() != null) {
+            sql.append(" and submitted_date >= ? ");
+            parameters.add(Date.valueOf(request.fromDate()));
+        }
+        if (request.toDate() != null) {
+            sql.append(" and submitted_date <= ? ");
+            parameters.add(Date.valueOf(request.toDate()));
+        }
+        sql.append(" order by embedding <=> ?::vector limit ?");
+        parameters.add(vectorLiteral(request.embedding()));
+        parameters.add(request.topK());
+        return jdbcTemplate.query(sql.toString(),
+                (resultSet, rowNumber) -> resultSet.getString(1), parameters.toArray());
+    }
+
+    @Override
+    public void analyze() {
+        jdbcTemplate.execute("analyze papers");
+        jdbcTemplate.execute("analyze paper_embeddings");
+    }
+
     private static String vectorLiteral(List<Double> values) {
         return values.stream()
                 .map(PgVectorStoreGateway::formatValue)

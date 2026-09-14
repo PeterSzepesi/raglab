@@ -1,0 +1,30 @@
+{"id":"exact-01","question":"Summarize arXiv 2401.00001.","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"exact-02","question":"What is paper [arXiv:2401.00002] about?","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"exact-03","question":"Give me the evidence stored for 2401.00001v1.","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"semantic-01","question":"Find the paper about retrieval repository testing and summarize it.","retrievalMode":"semantic","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"semantic-02","question":"Which local paper has a concise abstract about retrieval testing?","retrievalMode":"semantic","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"semantic-03","question":"What evidence discusses computer vision?","retrievalMode":"semantic","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"semantic-04","question":"Find work related to visual computer analysis.","retrievalMode":"hybrid","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"semantic-05","question":"Find research related to neural information retrieval testing.","retrievalMode":"hybrid","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"title-01","question":"Find the paper titled Retrieval Testing.","retrievalMode":"lexical","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"title-02","question":"Find the title Vision Paper.","retrievalMode":"lexical","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"keyword-01","question":"Search for concise abstract repository testing.","retrievalMode":"lexical","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"keyword-02","question":"Search for computer vision abstract.","retrievalMode":"lexical","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"filter-01","question":"What retrieval testing work is available?","retrievalMode":"lexical","category":"cs.CL","fromDate":"2024-01-01","toDate":"2024-12-31","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"filter-02","question":"What vision work is available?","retrievalMode":"lexical","category":"cs.CV","fromDate":"2024-01-01","toDate":"2024-12-31","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"filter-03","question":"Find retrieval testing evidence in AI.","retrievalMode":"hybrid","category":"cs.AI","fromDate":"2024-01-01","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"repeat-01","question":"Which local paper has a concise abstract about retrieval testing?","retrievalMode":"semantic","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"repeat-02","question":"Which local paper has a concise abstract about retrieval testing?","retrievalMode":"semantic","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"repeat-03","question":"What evidence discusses computer vision?","retrievalMode":"semantic","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"repeat-04","question":"What evidence discusses computer vision?","retrievalMode":"semantic","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}
+{"id":"no-evidence-01","question":"Summarize arXiv 9999.99991.","expectedArxivIds":[],"expectNoEvidence":true,"agentic":false}
+{"id":"no-evidence-02","question":"What does arXiv 9999.99992 conclude?","expectedArxivIds":[],"expectNoEvidence":true,"agentic":false}
+{"id":"no-evidence-03","question":"Explain the method in 9999.99993.","expectedArxivIds":[],"expectNoEvidence":true,"agentic":false}
+{"id":"no-evidence-04","question":"Find 9999.99994 in the local corpus.","expectedArxivIds":[],"expectNoEvidence":true,"agentic":false}
+{"id":"no-evidence-05","question":"Cite arXiv 9999.99995.","expectedArxivIds":[],"expectNoEvidence":true,"agentic":false}
+{"id":"compare-01","question":"Compare arXiv 2401.00001 and arXiv 2401.00002 using local evidence.","expectedArxivIds":["2401.00001","2401.00002"],"expectNoEvidence":false,"agentic":true}
+{"id":"compare-02","question":"How do Retrieval Testing and Vision Paper differ?","retrievalMode":"hybrid","expectedArxivIds":["2401.00001","2401.00002"],"expectNoEvidence":false,"agentic":true}
+{"id":"multi-step-01","question":"Find retrieval testing work, then identify its category and compare it with the vision paper.","expectedArxivIds":["2401.00001","2401.00002"],"expectNoEvidence":false,"agentic":true}
+{"id":"multi-step-02","question":"Use local search to identify the retrieval and vision fixture papers and summarize both.","expectedArxivIds":["2401.00001","2401.00002"],"expectNoEvidence":false,"agentic":true}
+{"id":"hybrid-01","question":"retrieval testing concise repository","retrievalMode":"hybrid","expectedArxivIds":["2401.00001"],"expectNoEvidence":false,"agentic":false}
+{"id":"hybrid-02","question":"vision computer abstract","retrievalMode":"hybrid","expectedArxivIds":["2401.00002"],"expectNoEvidence":false,"agentic":false}

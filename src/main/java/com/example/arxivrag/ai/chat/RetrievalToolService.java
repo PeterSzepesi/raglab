@@ -5,6 +5,7 @@ import com.example.arxivrag.paper.PaperRepository;
 import com.example.arxivrag.vector.SemanticSearchResult;
 import com.example.arxivrag.vector.SemanticSearchService;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -20,17 +21,27 @@ public class RetrievalToolService {
     public static final String RELATIONAL_PAPER_SEARCH = "relational_paper_search";
     public static final String PAPER_LOOKUP = "paper_lookup";
 
-    private static final int DEFAULT_TOP_K = 5;
     private static final int MAX_TOP_K = 10;
-    private static final int MAX_TEXT_LENGTH = 1200;
 
     private final SemanticSearchService semanticSearchService;
 
     private final PaperRepository paperRepository;
 
+    private final int defaultTopK;
+
+    private final int maxTextLength;
+
     public RetrievalToolService(SemanticSearchService semanticSearchService, PaperRepository paperRepository) {
+        this(semanticSearchService, paperRepository, new ChatProperties());
+    }
+
+    @Autowired
+    public RetrievalToolService(SemanticSearchService semanticSearchService, PaperRepository paperRepository,
+                                ChatProperties chatProperties) {
         this.semanticSearchService = semanticSearchService;
         this.paperRepository = paperRepository;
+        this.defaultTopK = chatProperties.getRetrievalTopK();
+        this.maxTextLength = chatProperties.getMaxContextCharactersPerPaper();
     }
 
     public List<Map<String, Object>> toolDefinitions() {
@@ -116,7 +127,7 @@ public class RetrievalToolService {
         return new ToolExecution(PAPER_LOOKUP, paperRows(List.of(value)), paperCitations(List.of(value)));
     }
 
-    private static List<Map<String, Object>> resultRows(List<SemanticSearchResult> results) {
+    private List<Map<String, Object>> resultRows(List<SemanticSearchResult> results) {
         return results.stream().<Map<String, Object>>map(result -> {
             var row = new LinkedHashMap<String, Object>();
             row.put("paperId", result.paperId());
@@ -131,7 +142,7 @@ public class RetrievalToolService {
         }).toList();
     }
 
-    private static List<Map<String, Object>> paperRows(List<Paper> papers) {
+    private List<Map<String, Object>> paperRows(List<Paper> papers) {
         return papers.stream().<Map<String, Object>>map(paper -> {
             var row = new LinkedHashMap<String, Object>();
             row.put("paperId", paper.getId());
@@ -212,10 +223,10 @@ public class RetrievalToolService {
         return string.trim();
     }
 
-    private static int topK(Map<String, Object> arguments) {
+    private int topK(Map<String, Object> arguments) {
         var value = arguments.get("topK");
         if (value == null) {
-            return DEFAULT_TOP_K;
+            return defaultTopK;
         }
         if (!(value instanceof Number number) || number.doubleValue() != Math.rint(number.doubleValue())) {
             throw new IllegalArgumentException("topK must be an integer between 1 and " + MAX_TOP_K);
@@ -239,10 +250,10 @@ public class RetrievalToolService {
         }
     }
 
-    private static String truncate(String value) {
-        if (value == null || value.length() <= MAX_TEXT_LENGTH) {
+    private String truncate(String value) {
+        if (value == null || value.length() <= maxTextLength) {
             return value;
         }
-        return value.substring(0, MAX_TEXT_LENGTH) + "...";
+        return value.substring(0, maxTextLength) + "...";
     }
 }

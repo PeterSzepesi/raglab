@@ -357,9 +357,10 @@ Acceptance criteria:
 Status:
 
 - Implemented as `GroundedChatService` and `ChatController` at `POST /api/chat` for the `foundry` profile.
-- The model can request only `semantic_search`, `relational_paper_search`, or `paper_lookup`.
-- The local application validates tool names, arguments, dates, and topK, executes PostgreSQL/vector operations, and sends bounded JSON evidence back to Foundry.
-- The loop is capped at three tool rounds. Provider calls remain outside normal offline tests.
+- The default one-call path locally selects exact-ID, structured relational, semantic, or hybrid retrieval, then sends only bounded evidence to Foundry.
+- Exact-ID retrieval bypasses query embedding. Query embeddings and retrieval results are cached with model/schema/filter/generation-safe keys.
+- The optional agentic mode can request only `semantic_search`, `relational_paper_search`, or `paper_lookup`; arguments, concurrency, rounds, and aggregate context are bounded.
+- Both paths enforce that inline citations refer only to retained local evidence. Provider calls remain outside normal offline tests.
 
 ## Step 9 — Upgrade The Static UI
 
@@ -369,7 +370,7 @@ Wire the existing UI shell to real APIs.
 Implementation:
 
 - search page calls `POST /api/search`;
-- chat page calls `POST /api/chat`;
+- chat page streams `POST /api/chat/stream` and falls back to `POST /api/chat`;
 - settings page continues using safe runtime config;
 - system status includes database/vector readiness once available.
 
@@ -398,7 +399,7 @@ Acceptance criteria:
 
 Status:
 
-- Implemented in the existing static UI. Search calls `POST /api/search`; Chat calls `POST /api/chat` and renders answers, citations, and tool traces.
+- Implemented in the existing static UI. Search calls `POST /api/search`; Chat displays retrieval status/citations, streams escaped answer deltas, supports cancellation and retrieval options, and renders safe clickable arXiv links.
 - Run the `foundry` profile after importing and embedding a small corpus to test the complete local-browser-to-Foundry path.
 
 ## Improvement plan implementation status
@@ -413,8 +414,12 @@ The post-Step-9 improvement core is implemented in the current branch:
 - Checkpoint identity includes the retrieval-document schema version so formatter changes cannot silently reuse incompatible work.
 - Vector search carries category/date filters into the vector-store gateway. PostgreSQL adds full-text and trigram indexes; `POST /api/search` accepts semantic, lexical, and hybrid modes.
 - Micrometer ingestion/search meters are exposed through `/actuator/metrics`; the static UI shows vector coverage and can launch a bounded background job.
+- Chat and Foundry meters decompose retrieval, embedding, vector SQL, hydration, answer generation, TTFT, quota wait, retry delay, token usage, and cache behavior. Non-streaming responses expose request IDs and `Server-Timing`.
+- Chat and embedding deployments have independent local quota domains. Background ingestion reserves capacity for interactive query embeddings and interactive waits/retries fail within configured bounds.
+- `POST /api/search/diagnostics/vector-plan` can run measured pgvector `EXPLAIN (ANALYZE, BUFFERS)` when local debug timings are enabled; successful bulk vector writes refresh PostgreSQL statistics.
+- `chat-benchmark` runs the 30-case version-controlled evaluation set and reports p50/p90/p95 latency, TTFT, token use, retries, citations, and quality gates for primary/candidate deployments.
 
-Still intentionally deferred are distributed workers, Milvus/Chroma comparison, PDF/full-text chunking, reranking/query rewriting, benchmark evaluation data, and production authentication/managed identity.
+Still intentionally deferred are distributed workers, Milvus/Chroma comparison, PDF/full-text chunking, reranking/query rewriting, candidate deployment provisioning, and production authentication/managed identity.
 
 ## Step 10 — Add Milvus And Chroma
 

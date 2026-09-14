@@ -7,6 +7,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -21,10 +24,16 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Component
 @Profile("foundry")
 public class FoundryClient {
+
+    private static final Logger logger = LoggerFactory.getLogger(FoundryClient.class);
 
     private final FoundryProperties properties;
 
@@ -32,33 +41,59 @@ public class FoundryClient {
 
     private final HttpClient httpClient;
 
-    private final FoundryQuotaLimiter quotaLimiter;
+    private final FoundryQuotaLimiterRegistry quotaLimiters;
+
+    private final FoundryMetrics metrics;
 
     @Autowired
-    public FoundryClient(FoundryProperties properties, ObjectMapper objectMapper) {
+    public FoundryClient(
+            FoundryProperties properties,
+            ObjectMapper objectMapper,
+            FoundryQuotaLimiterRegistry quotaLimiters,
+            FoundryMetrics metrics
+    ) {
         this(properties, objectMapper, HttpClient.newBuilder()
                 .connectTimeout(timeout(properties.getRequestTimeout()))
-                .build(), new FoundryQuotaLimiter(properties.getMaxRequestsPerMinute(), properties.getMaxTokensPerMinute()));
+                .build(), quotaLimiters, metrics);
     }
 
     FoundryClient(FoundryProperties properties, ObjectMapper objectMapper, HttpClient httpClient) {
         this(properties, objectMapper, httpClient,
-                new FoundryQuotaLimiter(properties.getMaxRequestsPerMinute(), properties.getMaxTokensPerMinute()));
+                new FoundryQuotaLimiterRegistry(properties), null);
     }
 
     FoundryClient(FoundryProperties properties, ObjectMapper objectMapper, HttpClient httpClient,
                   FoundryQuotaLimiter quotaLimiter) {
+        this(properties, objectMapper, httpClient,
+                new FoundryQuotaLimiterRegistry(properties) {
+                    @Override
+                    public Duration acquire(String deployment, FoundryOperation operation, int estimatedTokens) {
+                        return quotaLimiter.acquire(estimatedTokens, operation.background(),
+                                properties.getInteractiveReservedRequestsPerMinute(),
+                                properties.getInteractiveReservedTokensPerMinute(), Duration.ofDays(1));
+                    }
+                }, null);
+    }
+
+    FoundryClient(FoundryProperties properties, ObjectMapper objectMapper, HttpClient httpClient,
+                  FoundryQuotaLimiterRegistry quotaLimiters, FoundryMetrics metrics) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
-        this.quotaLimiter = quotaLimiter;
+        this.quotaLimiters = quotaLimiters;
+        this.metrics = metrics;
     }
 
     public List<Double> embed(String deployment, String input, int dimensions) {
-        return embed(deployment, List.of(input), dimensions).getFirst();
+        return embedInternal(deployment, List.of(input), dimensions, FoundryOperation.QUERY_EMBEDDING).getFirst();
     }
 
     public List<List<Double>> embed(String deployment, List<String> inputs, int dimensions) {
+        return embedInternal(deployment, inputs, dimensions, FoundryOperation.INGESTION_EMBEDDING);
+    }
+
+    private List<List<Double>> embedInternal(
+            String deployment, List<String> inputs, int dimensions, FoundryOperation operation) {
         if (deployment == null || deployment.isBlank()) {
             throw new FoundryProviderException("Foundry embedding deployment must not be blank");
         }
@@ -73,9 +108,10 @@ public class FoundryClient {
                 "input", inputs,
                 "dimensions", dimensions
         ));
-        quotaLimiter.acquire(inputs.stream().mapToInt(FoundryClient::estimateTokens).sum());
-        var response = postWithRetry("/openai/deployments/" + encode(deployment) + "/embeddings", body);
-        var data = response.path("data");
+        quotaLimiters.acquire(deployment, operation,
+                inputs.stream().mapToInt(FoundryClient::estimateTokens).sum());
+        var response = postWithRetry("/openai/deployments/" + encode(deployment) + "/embeddings", body, operation);
+        var data = response.body().path("data");
         if (!data.isArray() || data.size() != inputs.size()) {
             throw new FoundryProviderException("Foundry embedding response contained "
                     + (data.isArray() ? data.size() : 0) + " vectors for " + inputs.size() + " inputs");
@@ -118,7 +154,7 @@ public class FoundryClient {
         }
         messages.add(Map.of("role", "user", "content", userMessage));
 
-        var result = chatWithTools(deployment, new ArrayList<>(messages), List.of());
+        var result = chatWithTools(deployment, new ArrayList<>(messages), List.of(), FoundryChatOptions.defaults());
         if (result.content() == null || result.content().isBlank()) {
             throw new FoundryProviderException("Foundry chat response did not contain message content");
         }
@@ -130,6 +166,15 @@ public class FoundryClient {
             List<Map<String, Object>> messages,
             List<Map<String, Object>> tools
     ) {
+        return chatWithTools(deployment, messages, tools, FoundryChatOptions.defaults());
+    }
+
+    public FoundryChatResult chatWithTools(
+            String deployment,
+            List<Map<String, Object>> messages,
+            List<Map<String, Object>> tools,
+            FoundryChatOptions options
+    ) {
         if (deployment == null || deployment.isBlank()) {
             throw new FoundryProviderException("Foundry chat deployment must not be blank");
         }
@@ -140,16 +185,18 @@ public class FoundryClient {
         var payload = new HashMap<String, Object>();
         payload.put("model", deployment);
         payload.put("messages", messages);
+        payload.put("n", 1);
+        applyOptions(payload, options);
         if (tools != null && !tools.isEmpty()) {
             payload.put("tools", tools);
             payload.put("tool_choice", "auto");
         }
 
-        quotaLimiter.acquire(messages.stream()
-                .mapToInt(message -> estimateTokens(String.valueOf(message.getOrDefault("content", ""))))
-                .sum());
-        var response = postWithRetry("/openai/deployments/" + encode(deployment) + "/chat/completions", writeJson(payload));
-        var message = response.path("choices").path(0).path("message");
+        var quotaWait = quotaLimiters.acquire(deployment, FoundryOperation.CHAT,
+                estimatedChatTokens(messages, options));
+        var response = postWithRetry("/openai/deployments/" + encode(deployment) + "/chat/completions",
+                writeJson(payload), FoundryOperation.CHAT);
+        var message = response.body().path("choices").path(0).path("message");
         if (!message.isObject()) {
             throw new FoundryProviderException("Foundry chat response did not contain an assistant message");
         }
@@ -176,7 +223,104 @@ public class FoundryClient {
             throw new FoundryProviderException("Foundry chat response contained neither content nor tool calls");
         }
         return new FoundryChatResult(content, List.copyOf(toolCalls),
-                Collections.unmodifiableMap(new LinkedHashMap<>(assistantMessage)));
+                Collections.unmodifiableMap(new LinkedHashMap<>(assistantMessage)),
+                metadata(response, quotaWait));
+    }
+
+    public FoundryStreamResult streamChat(
+            String deployment,
+            List<Map<String, Object>> messages,
+            FoundryChatOptions options,
+            Consumer<String> deltaConsumer
+    ) {
+        if (deployment == null || deployment.isBlank()) {
+            throw new FoundryProviderException("Foundry chat deployment must not be blank");
+        }
+        if (messages == null || messages.isEmpty()) {
+            throw new FoundryProviderException("Foundry chat requires at least one message");
+        }
+        if (deltaConsumer == null) {
+            throw new IllegalArgumentException("deltaConsumer must not be null");
+        }
+        var payload = new HashMap<String, Object>();
+        payload.put("model", deployment);
+        payload.put("messages", messages);
+        payload.put("n", 1);
+        payload.put("stream", true);
+        payload.put("stream_options", Map.of("include_usage", true));
+        applyOptions(payload, options);
+
+        var quotaWait = quotaLimiters.acquire(deployment, FoundryOperation.CHAT,
+                estimatedChatTokens(messages, options));
+        var body = writeJson(payload);
+        var path = "/openai/deployments/" + encode(deployment) + "/chat/completions";
+        var retryWait = Duration.ZERO;
+        var providerDuration = Duration.ZERO;
+        var attempt = 0;
+        while (true) {
+            var started = Instant.now();
+            var response = sendStreaming(request(path, body));
+            var requestDuration = Duration.between(started, Instant.now());
+            providerDuration = providerDuration.plus(requestDuration);
+            if (metrics != null) {
+                metrics.request(FoundryOperation.CHAT, requestDuration);
+            }
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                var failure = providerFailure(response.statusCode(), response.headers(), readBody(response.body()));
+                if (!failure.retryable() || attempt >= maxRetries(FoundryOperation.CHAT)) {
+                    throw failure;
+                }
+                var delay = failure.retryAfter() == null ? backoff(attempt) : failure.retryAfter();
+                retryWait = retryWait.plus(delay);
+                if (metrics != null) {
+                    metrics.retry(FoundryOperation.CHAT, failure.statusCode(), delay);
+                }
+                logger.warn("Retrying Foundry streaming chat after status={} delay={} attempt={} requestId={}",
+                        failure.statusCode(), delay, attempt + 1, failure.requestId());
+                sleep(delay);
+                attempt++;
+                continue;
+            }
+
+            var requestId = requestId(response.headers());
+            var parser = new FoundrySseParser(objectMapper, deltaConsumer);
+            try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("streaming request cancelled");
+                    }
+                    parser.acceptLine(line);
+                }
+                parser.finish();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new FoundryProviderException("Foundry streaming request was interrupted", exception);
+            } catch (IOException exception) {
+                throw new FoundryProviderException("Could not stream Microsoft AI Foundry response", exception);
+            }
+            if (parser.content().isBlank()) {
+                throw new FoundryProviderException("Foundry streaming response did not contain message content");
+            }
+            return new FoundryStreamResult(parser.content(),
+                    new ProviderMetadata(parser.promptTokens(), parser.completionTokens(), parser.totalTokens(),
+                            parser.reasoningTokens(), parser.cachedPromptTokens(), requestId,
+                            providerDuration, attempt, quotaWait, retryWait));
+        }
+    }
+
+    private HttpResponse<InputStream> sendStreaming(HttpRequest request) {
+        var future = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream());
+        try {
+            return future.get();
+        } catch (InterruptedException exception) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new FoundryProviderException("Foundry streaming request was interrupted", exception);
+        } catch (ExecutionException exception) {
+            var cause = exception.getCause() == null ? exception : exception.getCause();
+            throw new FoundryProviderException("Could not start Microsoft AI Foundry stream", cause);
+        }
     }
 
     private Map<String, Object> parseArguments(String arguments) {
@@ -196,32 +340,21 @@ public class FoundryClient {
         }
     }
 
-    private JsonNode post(String path, String body) {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl() + path + "?api-version=" + encode(properties.getApiVersion())))
-                .timeout(timeout(properties.getRequestTimeout()))
-                .header("Content-Type", "application/json")
-                .header("api-key", requireApiKey())
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
+    private ProviderResponse post(String path, String body, FoundryOperation operation) {
+        var request = request(path, body);
+        var started = Instant.now();
 
         try {
             var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                var responseHeaders = response.headers();
-                Duration retryAfter = null;
-                if (responseHeaders != null) {
-                    retryAfter = responseHeaders.firstValue("retry-after")
-                            .flatMap(FoundryClient::parseRetryAfter)
-                            .orElse(null);
-                }
-                var requestId = responseHeaders == null ? null : responseHeaders.firstValue("x-request-id").orElse(null);
-                throw new FoundryProviderException(
-                        "Foundry request failed with HTTP " + response.statusCode() + ": " + truncate(response.body()),
-                        response.statusCode(), retryAfter, requestId
-                );
+            var duration = Duration.between(started, Instant.now());
+            if (metrics != null) {
+                metrics.request(operation, duration);
             }
-            return objectMapper.readTree(response.body());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw providerFailure(response.statusCode(), response.headers(), response.body());
+            }
+            return new ProviderResponse(objectMapper.readTree(response.body()), response.headers(), duration, 0,
+                    Duration.ZERO);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new FoundryProviderException("Foundry request was interrupted", exception);
@@ -233,21 +366,96 @@ public class FoundryClient {
         }
     }
 
-    private JsonNode postWithRetry(String path, String body) {
+    private HttpRequest request(String path, String body) {
+        return HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl() + path + "?api-version=" + encode(properties.getApiVersion())))
+                .timeout(timeout(properties.getRequestTimeout()))
+                .header("Content-Type", "application/json")
+                .header("api-key", requireApiKey())
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+    }
+
+    private FoundryProviderException providerFailure(int statusCode, java.net.http.HttpHeaders headers, String body) {
+        var retryAfter = headers == null ? null : headers.firstValue("retry-after")
+                .flatMap(FoundryClient::parseRetryAfter).orElse(null);
+        return new FoundryProviderException(
+                "Foundry request failed with HTTP " + statusCode + ": " + truncate(body),
+                statusCode, retryAfter, requestId(headers));
+    }
+
+    private ProviderResponse postWithRetry(String path, String body, FoundryOperation operation) {
         var attempt = 0;
+        var retryWait = Duration.ZERO;
         while (true) {
             try {
-                return post(path, body);
+                var response = post(path, body, operation);
+                return new ProviderResponse(response.body(), response.headers(), response.duration(), attempt, retryWait);
             } catch (FoundryProviderException exception) {
-                if (!exception.retryable() || attempt >= Math.max(0, properties.getMaxRetries())) {
+                if (!exception.retryable() || attempt >= maxRetries(operation)) {
                     throw exception;
                 }
                 var delay = exception.retryAfter() == null
                         ? backoff(attempt)
                         : exception.retryAfter();
+                retryWait = retryWait.plus(delay);
+                if (metrics != null) {
+                    metrics.retry(operation, exception.statusCode(), delay);
+                }
+                logger.warn("Retrying Foundry {} request after status={} delay={} attempt={} requestId={}",
+                        operation.metricName(), exception.statusCode(), delay, attempt + 1, exception.requestId());
                 sleep(delay);
                 attempt++;
             }
+        }
+    }
+
+    private int maxRetries(FoundryOperation operation) {
+        return Math.max(0, switch (operation) {
+            case CHAT -> properties.getChatMaxRetries();
+            case QUERY_EMBEDDING -> properties.getQueryEmbeddingMaxRetries();
+            case INGESTION_EMBEDDING -> properties.getMaxRetries();
+        });
+    }
+
+    private ProviderMetadata metadata(ProviderResponse response, Duration quotaWait) {
+        var usage = response.body().path("usage");
+        var promptDetails = usage.path("prompt_tokens_details");
+        var completionDetails = usage.path("completion_tokens_details");
+        return new ProviderMetadata(
+                usage.path("prompt_tokens").asInt(-1),
+                usage.path("completion_tokens").asInt(-1),
+                usage.path("total_tokens").asInt(-1),
+                completionDetails.path("reasoning_tokens").asInt(-1),
+                promptDetails.path("cached_tokens").asInt(-1),
+                requestId(response.headers()), response.duration(), response.retryCount(),
+                quotaWait, response.retryWait());
+    }
+
+    private static String requestId(java.net.http.HttpHeaders headers) {
+        if (headers == null) {
+            return null;
+        }
+        return headers.firstValue("apim-request-id")
+                .or(() -> headers.firstValue("x-request-id"))
+                .orElse(null);
+    }
+
+    private static void applyOptions(Map<String, Object> payload, FoundryChatOptions options) {
+        var effective = options == null ? FoundryChatOptions.defaults() : options;
+        if (effective.maxCompletionTokens() != null) {
+            payload.put("max_completion_tokens", effective.maxCompletionTokens());
+        }
+        if (effective.temperature() != null) {
+            payload.put("temperature", effective.temperature());
+        }
+    }
+
+    private static String readBody(InputStream stream) {
+        try (stream) {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            return "<unreadable response body>";
         }
     }
 
@@ -323,6 +531,15 @@ public class FoundryClient {
         return Math.max(1, (value == null ? 0 : value.length() + 3) / 4);
     }
 
+    private static int estimatedChatTokens(List<Map<String, Object>> messages, FoundryChatOptions options) {
+        var promptTokens = messages.stream()
+                .mapToInt(message -> estimateTokens(String.valueOf(message.getOrDefault("content", ""))))
+                .sum();
+        var effective = options == null ? FoundryChatOptions.defaults() : options;
+        return promptTokens + Math.max(0,
+                effective.maxCompletionTokens() == null ? 0 : effective.maxCompletionTokens());
+    }
+
     private static String truncate(String value) {
         if (value == null) {
             return "";
@@ -346,7 +563,7 @@ public class FoundryClient {
             this(message, cause, 0, null, null);
         }
 
-        private FoundryProviderException(String message, int statusCode, Duration retryAfter, String requestId) {
+        public FoundryProviderException(String message, int statusCode, Duration retryAfter, String requestId) {
             this(message, null, statusCode, retryAfter, requestId);
         }
 
@@ -382,7 +599,47 @@ public class FoundryClient {
     public record FoundryChatResult(
             String content,
             List<FoundryToolCall> toolCalls,
-            Map<String, Object> assistantMessage
+            Map<String, Object> assistantMessage,
+            ProviderMetadata metadata
+    ) {
+        public FoundryChatResult(String content, List<FoundryToolCall> toolCalls, Map<String, Object> assistantMessage) {
+            this(content, toolCalls, assistantMessage, ProviderMetadata.unknown());
+        }
+    }
+
+    public record FoundryChatOptions(Integer maxCompletionTokens, Double temperature) {
+        public static FoundryChatOptions defaults() {
+            return new FoundryChatOptions(null, null);
+        }
+    }
+
+    public record ProviderMetadata(
+            int promptTokens,
+            int completionTokens,
+            int totalTokens,
+            int reasoningTokens,
+            int cachedPromptTokens,
+            String requestId,
+            Duration requestDuration,
+            int retryCount,
+            Duration quotaWait,
+            Duration retryWait
+    ) {
+        public static ProviderMetadata unknown() {
+            return new ProviderMetadata(-1, -1, -1, -1, -1, null,
+                    Duration.ZERO, 0, Duration.ZERO, Duration.ZERO);
+        }
+    }
+
+    public record FoundryStreamResult(String content, ProviderMetadata metadata) {
+    }
+
+    private record ProviderResponse(
+            JsonNode body,
+            java.net.http.HttpHeaders headers,
+            Duration duration,
+            int retryCount,
+            Duration retryWait
     ) {
     }
 }

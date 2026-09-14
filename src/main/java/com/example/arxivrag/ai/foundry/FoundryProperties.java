@@ -23,7 +23,29 @@ public class FoundryProperties {
 
     private int maxTokensPerMinute = 150_000;
 
+    private int chatMaxRequestsPerMinute = 150;
+
+    private int chatMaxTokensPerMinute = 150_000;
+
+    private int embeddingMaxRequestsPerMinute = 150;
+
+    private int embeddingMaxTokensPerMinute = 150_000;
+
     private int maxRetries = 3;
+
+    private int chatMaxRetries = 1;
+
+    private int queryEmbeddingMaxRetries = 1;
+
+    private int interactiveReservedRequestsPerMinute = 10;
+
+    private int interactiveReservedTokensPerMinute = 10_000;
+
+    private Duration chatMaxQuotaWait = Duration.ofSeconds(2);
+
+    private Duration queryEmbeddingMaxQuotaWait = Duration.ofSeconds(2);
+
+    private Duration ingestionEmbeddingMaxQuotaWait = Duration.ofSeconds(60);
 
     private Duration retryInitialBackoff = Duration.ofSeconds(1);
 
@@ -93,12 +115,100 @@ public class FoundryProperties {
         this.maxTokensPerMinute = maxTokensPerMinute;
     }
 
+    public int getChatMaxRequestsPerMinute() {
+        return chatMaxRequestsPerMinute;
+    }
+
+    public void setChatMaxRequestsPerMinute(int value) {
+        this.chatMaxRequestsPerMinute = value;
+    }
+
+    public int getChatMaxTokensPerMinute() {
+        return chatMaxTokensPerMinute;
+    }
+
+    public void setChatMaxTokensPerMinute(int value) {
+        this.chatMaxTokensPerMinute = value;
+    }
+
+    public int getEmbeddingMaxRequestsPerMinute() {
+        return embeddingMaxRequestsPerMinute;
+    }
+
+    public void setEmbeddingMaxRequestsPerMinute(int value) {
+        this.embeddingMaxRequestsPerMinute = value;
+    }
+
+    public int getEmbeddingMaxTokensPerMinute() {
+        return embeddingMaxTokensPerMinute;
+    }
+
+    public void setEmbeddingMaxTokensPerMinute(int value) {
+        this.embeddingMaxTokensPerMinute = value;
+    }
+
     public int getMaxRetries() {
         return maxRetries;
     }
 
     public void setMaxRetries(int maxRetries) {
         this.maxRetries = maxRetries;
+    }
+
+    public int getChatMaxRetries() {
+        return chatMaxRetries;
+    }
+
+    public void setChatMaxRetries(int chatMaxRetries) {
+        this.chatMaxRetries = chatMaxRetries;
+    }
+
+    public int getQueryEmbeddingMaxRetries() {
+        return queryEmbeddingMaxRetries;
+    }
+
+    public void setQueryEmbeddingMaxRetries(int queryEmbeddingMaxRetries) {
+        this.queryEmbeddingMaxRetries = queryEmbeddingMaxRetries;
+    }
+
+    public int getInteractiveReservedRequestsPerMinute() {
+        return interactiveReservedRequestsPerMinute;
+    }
+
+    public void setInteractiveReservedRequestsPerMinute(int value) {
+        this.interactiveReservedRequestsPerMinute = value;
+    }
+
+    public int getInteractiveReservedTokensPerMinute() {
+        return interactiveReservedTokensPerMinute;
+    }
+
+    public void setInteractiveReservedTokensPerMinute(int value) {
+        this.interactiveReservedTokensPerMinute = value;
+    }
+
+    public Duration getChatMaxQuotaWait() {
+        return chatMaxQuotaWait;
+    }
+
+    public void setChatMaxQuotaWait(Duration chatMaxQuotaWait) {
+        this.chatMaxQuotaWait = chatMaxQuotaWait;
+    }
+
+    public Duration getQueryEmbeddingMaxQuotaWait() {
+        return queryEmbeddingMaxQuotaWait;
+    }
+
+    public void setQueryEmbeddingMaxQuotaWait(Duration queryEmbeddingMaxQuotaWait) {
+        this.queryEmbeddingMaxQuotaWait = queryEmbeddingMaxQuotaWait;
+    }
+
+    public Duration getIngestionEmbeddingMaxQuotaWait() {
+        return ingestionEmbeddingMaxQuotaWait;
+    }
+
+    public void setIngestionEmbeddingMaxQuotaWait(Duration ingestionEmbeddingMaxQuotaWait) {
+        this.ingestionEmbeddingMaxQuotaWait = ingestionEmbeddingMaxQuotaWait;
     }
 
     public Duration getRetryInitialBackoff() {

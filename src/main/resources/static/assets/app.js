@@ -78,6 +78,8 @@ let backendHealth = {
 let embeddingStatus = null;
 let embeddingStatusError = null;
 let chatTranscript = [];
+let chatAbortController = null;
+let chatRenderPending = false;
 
 function escapeHtml(value) {
     return String(value)
@@ -413,9 +415,12 @@ function renderChatPage(page) {
             const tools = entry.toolsUsed?.length
                 ? `<small class="tool-trace">Tools: ${entry.toolsUsed.map(escapeHtml).join(", ")}</small>`
                 : "";
-            return `<div class="chat-message ${entry.role === "user" ? "user" : "assistant"}">
+            const status = entry.status
+                ? `<small class="stream-status">${escapeHtml(entry.status)}</small>`
+                : "";
+            return `<div class="chat-message ${entry.role === "user" ? "user" : "assistant"} ${entry.streaming ? "streaming" : ""}">
                 <strong>${entry.role === "user" ? "You" : "Grounded assistant"}</strong>
-                <p>${escapeHtml(entry.content)}</p>${citations}${tools}
+                ${status}<p>${escapeHtml(entry.content || (entry.streaming ? "Waiting for Foundry…" : ""))}</p>${citations}${tools}
             </div>`;
         }).join("");
 
@@ -429,7 +434,27 @@ function renderChatPage(page) {
                     Question
                     <textarea name="message" rows="4" placeholder="Which papers discuss neural retrieval?" required></textarea>
                 </label>
-                <button class="primary-button" type="submit">Ask Foundry</button>
+                <details class="chat-options">
+                    <summary>Retrieval options</summary>
+                    <div class="chat-option-grid">
+                        <label>Mode
+                            <select name="retrievalMode">
+                                <option value="">Automatic</option>
+                                <option value="semantic">Semantic</option>
+                                <option value="lexical">Lexical</option>
+                                <option value="hybrid">Hybrid</option>
+                            </select>
+                        </label>
+                        <label>Category <input name="category" placeholder="cs.AI"></label>
+                        <label>From <input name="fromDate" type="date"></label>
+                        <label>To <input name="toDate" type="date"></label>
+                        <label class="checkbox-label"><input name="agentic" type="checkbox"> Agentic tool mode</label>
+                    </div>
+                </details>
+                <div class="chat-actions">
+                    <button class="primary-button" type="submit" ${chatAbortController ? "disabled" : ""}>Ask Foundry</button>
+                    ${chatAbortController ? `<button class="icon-button chat-cancel" type="button" data-chat-cancel>Cancel</button>` : ""}
+                </div>
             </form>
         </div>
     `;
@@ -493,7 +518,22 @@ async function submitChat(form) {
     if (!message) {
         return;
     }
+    const request = {
+        message,
+        retrievalMode: formData.get("retrievalMode") || null,
+        category: formData.get("category") || null,
+        fromDate: formData.get("fromDate") || null,
+        toDate: formData.get("toDate") || null,
+        agentic: formData.get("agentic") === "on" ? true : null
+    };
+    if (chatAbortController) {
+        chatAbortController.abort();
+    }
+    const requestController = new AbortController();
+    chatAbortController = requestController;
+    const assistant = {role: "assistant", content: "", citations: [], toolsUsed: [], status: "Starting retrieval…", streaming: true};
     chatTranscript.push({role: "user", content: message});
+    chatTranscript.push(assistant);
     renderPage();
     const chatForm = document.querySelector("[data-chat-form]");
     if (chatForm) {
@@ -501,29 +541,151 @@ async function submitChat(form) {
         chatForm.querySelector("button").disabled = true;
     }
     try {
-        const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: {"Accept": "application/json", "Content-Type": "application/json"},
-            body: JSON.stringify({message})
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-            throw new Error(payload.error ?? `Chat endpoint returned ${response.status}`);
-        }
-        chatTranscript.push({
-            role: "assistant",
-            content: payload.answer,
-            citations: payload.citations ?? [],
-            toolsUsed: payload.toolsUsed ?? []
-        });
+        await submitStreamingChat(request, assistant, requestController.signal);
         clearGlobalError();
     } catch (error) {
-        chatTranscript.push({role: "assistant", content: `Chat failed: ${error.message}`});
-        showGlobalError("Grounded chat failed. Check the Foundry key, deployment, database, and embedding coverage.");
+        if (error.name === "AbortError") {
+            assistant.status = null;
+            assistant.streaming = false;
+            assistant.content = assistant.content || "Request cancelled.";
+        } else if (error.fallbackAllowed) {
+            try {
+                await submitNonStreamingChat(request, assistant, requestController.signal);
+                clearGlobalError();
+            } catch (fallbackError) {
+                assistant.status = null;
+                assistant.streaming = false;
+                assistant.content = `Chat failed: ${fallbackError.message}`;
+                showGlobalError("Grounded chat failed. Check the Foundry key, deployment, database, and embedding coverage.");
+            }
+        } else {
+            assistant.status = null;
+            assistant.streaming = false;
+            assistant.content = `Chat failed: ${error.message}`;
+            showGlobalError("Grounded chat failed. Check the Foundry key, deployment, database, and embedding coverage.");
+        }
+    } finally {
+        if (chatAbortController === requestController) {
+            chatAbortController = null;
+        }
     }
     if ((window.location.hash.replace("#/", "") || "system-status") === "chat") {
         renderPage();
     }
+}
+
+async function submitNonStreamingChat(request, assistant, signal) {
+    const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: {"Accept": "application/json", "Content-Type": "application/json"},
+            body: JSON.stringify(request),
+            signal
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+        throw new Error(payload.error ?? `Chat endpoint returned ${response.status}`);
+    }
+    Object.assign(assistant, {
+        content: payload.answer,
+        citations: payload.citations ?? [],
+        toolsUsed: payload.toolsUsed ?? [],
+        status: null,
+        streaming: false
+    });
+}
+
+async function submitStreamingChat(request, assistant, signal) {
+    const response = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: {"Accept": "text/event-stream", "Content-Type": "application/json"},
+        body: JSON.stringify(request),
+        signal
+    });
+    if ([404, 405, 406, 415].includes(response.status)) {
+        const error = new Error("Streaming is unavailable");
+        error.fallbackAllowed = true;
+        throw error;
+    }
+    if (!response.ok || !response.body) {
+        let detail = `Chat stream returned ${response.status}`;
+        try {
+            const payload = await response.json();
+            detail = payload.error ?? detail;
+        } catch {
+            // Keep the status-based message when the response is not JSON.
+        }
+        throw new Error(detail);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+        const {value, done} = await reader.read();
+        buffer = (buffer + decoder.decode(value ?? new Uint8Array(), {stream: !done}))
+            .replaceAll("\r\n", "\n");
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            handleChatEvent(parseSseFrame(frame), assistant);
+        }
+        if (done) {
+            if (buffer.trim()) {
+                handleChatEvent(parseSseFrame(buffer), assistant);
+            }
+            break;
+        }
+    }
+    if (assistant.streaming) {
+        throw new Error("Chat stream ended before its completion event");
+    }
+}
+
+function parseSseFrame(frame) {
+    let event = "message";
+    const data = [];
+    for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) {
+            event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+            data.push(line.slice(5).trimStart());
+        }
+    }
+    return {event, data: data.length ? JSON.parse(data.join("\n")) : null};
+}
+
+function handleChatEvent(frame, assistant) {
+    if (frame.event === "retrieval") {
+        assistant.status = "Searching the local corpus…";
+    } else if (frame.event === "citations") {
+        assistant.citations = frame.data ?? [];
+        assistant.status = assistant.citations.length
+            ? `Found ${assistant.citations.length} source(s); Foundry is answering…`
+            : "No matching evidence found; Foundry is answering…";
+    } else if (frame.event === "delta") {
+        assistant.content += frame.data?.text ?? "";
+        assistant.status = "Foundry is streaming…";
+    } else if (frame.event === "complete") {
+        assistant.content = frame.data?.answer ?? assistant.content;
+        assistant.toolsUsed = frame.data?.toolsUsed ?? [];
+        assistant.status = null;
+        assistant.streaming = false;
+    } else if (frame.event === "error") {
+        throw new Error(frame.data?.message ?? "Chat stream failed");
+    }
+    scheduleChatRender();
+}
+
+function scheduleChatRender() {
+    if (chatRenderPending || (window.location.hash.replace("#/", "") || "system-status") !== "chat") {
+        return;
+    }
+    chatRenderPending = true;
+    requestAnimationFrame(() => {
+        chatRenderPending = false;
+        renderPage();
+    });
 }
 
 async function refreshBackendStatus() {
@@ -640,7 +802,12 @@ async function cancelEmbeddingJob() {
     }
 }
 
-window.addEventListener("hashchange", renderPage);
+window.addEventListener("hashchange", () => {
+    if ((window.location.hash.replace("#/", "") || "system-status") !== "chat" && chatAbortController) {
+        chatAbortController.abort();
+    }
+    renderPage();
+});
 window.addEventListener("error", () => {
     showGlobalError("Something went wrong in the demo UI. Refresh the page or retry the last action.");
 });
@@ -662,6 +829,9 @@ pageContent.addEventListener("click", (event) => {
     }
     if (event.target instanceof Element && event.target.matches("[data-embedding-job-cancel]")) {
         cancelEmbeddingJob();
+    }
+    if (event.target instanceof Element && event.target.matches("[data-chat-cancel]") && chatAbortController) {
+        chatAbortController.abort();
     }
 });
 pageContent.addEventListener("submit", (event) => {

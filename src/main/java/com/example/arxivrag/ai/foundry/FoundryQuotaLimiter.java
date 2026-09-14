@@ -24,10 +24,29 @@ public final class FoundryQuotaLimiter {
     }
 
     public void acquire(int estimatedTokens) {
+        acquire(estimatedTokens, false, 0, 0, Duration.ofDays(1));
+    }
+
+    public Duration acquire(
+            int estimatedTokens,
+            boolean background,
+            int reservedRequests,
+            int reservedTokens,
+            Duration maxWait
+    ) {
         var boundedTokens = Math.max(1, estimatedTokens);
         if (maxRequestsPerMinute <= 0 && maxTokensPerMinute <= 0) {
-            return;
+            return Duration.ZERO;
         }
+
+        var started = Instant.now();
+        var deadline = started.plus(validMaxWait(maxWait));
+        var requestLimit = background && maxRequestsPerMinute > 0
+                ? Math.max(1, maxRequestsPerMinute - Math.max(0, reservedRequests))
+                : maxRequestsPerMinute;
+        var tokenLimit = background && maxTokensPerMinute > 0
+                ? Math.max(1, maxTokensPerMinute - Math.max(0, reservedTokens))
+                : maxTokensPerMinute;
 
         boolean interrupted = false;
         try {
@@ -35,22 +54,27 @@ public final class FoundryQuotaLimiter {
                 var now = Instant.now();
                 synchronized (this) {
                     removeExpired(now);
-                    var requestLimitReached = maxRequestsPerMinute > 0 && usage.size() >= maxRequestsPerMinute;
+                    var requestLimitReached = requestLimit > 0 && usage.size() >= requestLimit;
                     var tokensUsed = usage.stream().mapToLong(Usage::tokens).sum();
-                    var tokenLimitReached = maxTokensPerMinute > 0
-                            && boundedTokens <= maxTokensPerMinute
-                            && tokensUsed + boundedTokens > maxTokensPerMinute;
+                    var tokenLimitReached = tokenLimit > 0
+                            && boundedTokens <= tokenLimit
+                            && tokensUsed + boundedTokens > tokenLimit;
                     if (!requestLimitReached && !tokenLimitReached) {
                         usage.addLast(new Usage(now, boundedTokens));
-                        return;
+                        return Duration.between(started, now);
                     }
 
                     var oldest = usage.peekFirst();
                     var waitMillis = oldest == null
                             ? 100L
                             : Math.max(100L, Duration.between(now, oldest.timestamp().plus(WINDOW)).toMillis());
+                    var remainingMillis = Duration.between(now, deadline).toMillis();
+                    if (remainingMillis <= 0) {
+                        throw new FoundryClient.FoundryProviderException(
+                                "Local Foundry quota wait exceeded " + validMaxWait(maxWait), 429, null, null);
+                    }
                     try {
-                        this.wait(Math.min(waitMillis, 5000L));
+                        this.wait(Math.min(Math.min(waitMillis, remainingMillis), 1000L));
                     } catch (InterruptedException exception) {
                         interrupted = true;
                         throw new FoundryClient.FoundryProviderException("Foundry quota wait was interrupted", exception);
@@ -62,6 +86,12 @@ public final class FoundryQuotaLimiter {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    private static Duration validMaxWait(Duration maxWait) {
+        return maxWait == null || maxWait.isNegative() || maxWait.isZero()
+                ? Duration.ofSeconds(1)
+                : maxWait;
     }
 
     private void removeExpired(Instant now) {

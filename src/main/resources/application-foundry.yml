@@ -26,7 +26,18 @@ foundry:
   request-timeout: ${AZURE_AI_FOUNDRY_REQUEST_TIMEOUT:120s}
   max-requests-per-minute: ${FOUNDRY_MAX_REQUESTS_PER_MINUTE:150}
   max-tokens-per-minute: ${FOUNDRY_MAX_TOKENS_PER_MINUTE:150000}
+  chat-max-requests-per-minute: ${FOUNDRY_CHAT_MAX_REQUESTS_PER_MINUTE:${FOUNDRY_MAX_REQUESTS_PER_MINUTE:150}}
+  chat-max-tokens-per-minute: ${FOUNDRY_CHAT_MAX_TOKENS_PER_MINUTE:${FOUNDRY_MAX_TOKENS_PER_MINUTE:150000}}
+  embedding-max-requests-per-minute: ${FOUNDRY_EMBEDDING_MAX_REQUESTS_PER_MINUTE:${FOUNDRY_MAX_REQUESTS_PER_MINUTE:150}}
+  embedding-max-tokens-per-minute: ${FOUNDRY_EMBEDDING_MAX_TOKENS_PER_MINUTE:${FOUNDRY_MAX_TOKENS_PER_MINUTE:150000}}
   max-retries: ${FOUNDRY_MAX_RETRIES:3}
+  chat-max-retries: ${FOUNDRY_CHAT_MAX_RETRIES:1}
+  query-embedding-max-retries: ${FOUNDRY_QUERY_EMBEDDING_MAX_RETRIES:1}
+  interactive-reserved-requests-per-minute: ${FOUNDRY_INTERACTIVE_RESERVED_RPM:10}
+  interactive-reserved-tokens-per-minute: ${FOUNDRY_INTERACTIVE_RESERVED_TPM:10000}
+  chat-max-quota-wait: ${FOUNDRY_CHAT_MAX_QUOTA_WAIT:2s}
+  query-embedding-max-quota-wait: ${FOUNDRY_QUERY_EMBEDDING_MAX_QUOTA_WAIT:2s}
+  ingestion-embedding-max-quota-wait: ${FOUNDRY_INGESTION_EMBEDDING_MAX_QUOTA_WAIT:60s}
   retry-initial-backoff: ${FOUNDRY_RETRY_INITIAL_BACKOFF:1s}
   retry-max-backoff: ${FOUNDRY_RETRY_MAX_BACKOFF:10s}
 
@@ -43,3 +54,22 @@ embedding:
 vector:
   store:
     type: pgvector
+
+chat:
+  orchestration-mode: ${RAG_CHAT_ORCHESTRATION_MODE:pre-retrieval}
+  max-tool-rounds: ${RAG_CHAT_MAX_TOOL_ROUNDS:1}
+  retrieval-top-k: ${RAG_CHAT_RETRIEVAL_TOP_K:4}
+  max-context-characters-per-paper: ${RAG_CHAT_MAX_CONTEXT_PER_PAPER:800}
+  max-context-characters-total: ${RAG_CHAT_MAX_CONTEXT_TOTAL:4000}
+  max-completion-tokens: ${RAG_CHAT_MAX_COMPLETION_TOKENS:400}
+  streaming-enabled: ${RAG_CHAT_STREAMING_ENABLED:true}
+  streaming-timeout: ${RAG_CHAT_STREAMING_TIMEOUT:90s}
+  cache-enabled: ${RAG_CHAT_CACHE_ENABLED:true}
+  cache-ttl: ${RAG_CHAT_CACHE_TTL:10m}
+  cache-maximum-size: ${RAG_CHAT_CACHE_MAXIMUM_SIZE:1000}
+  max-parallel-tool-calls: ${RAG_CHAT_MAX_PARALLEL_TOOL_CALLS:3}
+  debug-timings: ${RAG_CHAT_DEBUG_TIMINGS:false}
+  candidate-chat-deployment: ${AZURE_AI_FOUNDRY_CANDIDATE_CHAT_DEPLOYMENT:}
+  benchmark-input-price-per-million-tokens: ${RAG_CHAT_BENCHMARK_INPUT_PRICE_PER_MILLION:}
+  benchmark-cached-input-price-per-million-tokens: ${RAG_CHAT_BENCHMARK_CACHED_INPUT_PRICE_PER_MILLION:}
+  benchmark-output-price-per-million-tokens: ${RAG_CHAT_BENCHMARK_OUTPUT_PRICE_PER_MILLION:}

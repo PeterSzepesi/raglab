@@ -17,7 +17,7 @@ Spring Boot 4.1.0
         |
         +-- Runtime/search/chat/job controllers
         |     +-- /api/health and /api/runtime-config
-        |     +-- /api/search and /api/chat
+        |     +-- /api/search, /api/chat, and /api/chat/stream
         |     `-- /api/embeddings/status and /api/embeddings/jobs
         |
         `-- Actuator
@@ -48,7 +48,7 @@ com.example.arxivrag
     └── pgvector
 ```
 
-The `paper`, `arxiv`, `embedding`, `vector`, `search`, and `ai` packages contain executable slices. Embedding ingestion is bounded, resumable, batch-oriented, and single-worker safe. The search API supports semantic pgvector retrieval, PostgreSQL lexical retrieval, and a small rank-fusion hybrid mode. Grounded chat uses local retrieval tools while Foundry is used only for model inference.
+The `paper`, `arxiv`, `embedding`, `vector`, `search`, and `ai` packages contain executable slices. Embedding ingestion is bounded, resumable, batch-oriented, and single-worker safe. The search API supports semantic pgvector retrieval, PostgreSQL lexical retrieval, and concurrent rank-fusion hybrid mode. Grounded chat performs deterministic local pre-retrieval by default, while the model-directed tool loop remains a configurable agentic fallback. Foundry is used only for embedding and generation inference.
 
 ## Target Modular Boundaries
 
@@ -129,7 +129,11 @@ Current responsibilities:
 - AI Foundry chat model client through the current provider HTTP adapter
 - AI Foundry embedding model client through the current provider HTTP adapter
 - tool definitions for semantic search, relational search, and paper lookup
-- validation and orchestration of model-requested tool calls
+- deterministic exact-ID/relational/semantic/hybrid chat retrieval planning
+- bounded grounded-context construction and citation enforcement
+- streaming and non-streaming Foundry answer generation
+- validation and orchestration of model-requested tool calls in agentic mode
+- request/stage/provider telemetry, quota isolation, bounded caching, and benchmark evaluation
 
 Rules:
 - AI Foundry endpoints, deployment names, API versions, and credentials are profile-specific configuration.
@@ -175,7 +179,7 @@ Local VectorStoreGateway
     +-- Chroma
     |
     v
-Local retrieval tools -> filtered pgvector/PostgreSQL -> cited context
+Local retrieval planner -> filtered pgvector/PostgreSQL -> bounded cited context
     |
     v
 Local Spring Boot API <-> AI Foundry chat deployment
@@ -184,7 +188,7 @@ Local Spring Boot API <-> AI Foundry chat deployment
 Local web UI answer with citations
 ```
 
-The application and data plane run locally. AI Foundry is the remote model plane. During chat, the model requests a narrow tool, the local application executes the tool against PostgreSQL or the selected local vector store, and the local application sends a bounded result back to the model. The model does not connect directly to the local database.
+The application and data plane run locally. AI Foundry is the remote model plane. During normal chat, the local planner retrieves evidence before the single answer call, removing the model-selection round trip. Exact IDs bypass query embeddings; hybrid semantic and lexical branches run concurrently. In optional agentic mode, the model can request only narrow application-owned tools, which run locally with bounded concurrency and context. In neither mode can the model connect directly to the local database.
 
 ## Testability Standard
 
@@ -203,4 +207,5 @@ Every implementation stage must expose a result without depending on later stage
 1–6B. Implemented: PostgreSQL/Flyway, paper persistence, streaming import, retrieval documents, checkpointed embeddings, pgvector search, and Foundry chat/embedding adapters.
 7–9. Implemented: semantic search API, local retrieval tools, grounded chat, citations, and static UI wiring.
 10. Implemented improvement core: bounded/durable embedding jobs, batch Foundry calls, quota-aware retry, short transactions, batch vector writes, versioned checkpoints, filtered vector search, lexical/hybrid search, metrics, and job controls.
-11. Deferred: fixed evaluation set, reranking, richer full-text ingestion/chunking, Milvus/Chroma adapters, benchmark comparison, and production security/deployment hardening.
+11. Implemented chat-latency work: one-call pre-retrieval, streaming SSE/UI, bounded evidence/output, per-deployment quota scheduling, retry/usage telemetry, Caffeine caches with generation invalidation, parallel hybrid/tool execution, pgvector plan diagnostics, candidate-model A/B support, and a 30-case benchmark suite.
+12. Deferred: reranking, richer full-text ingestion/chunking, Milvus/Chroma adapters, exact-vs-HNSW recall reporting, and production security/deployment hardening.
