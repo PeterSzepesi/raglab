@@ -1,22 +1,33 @@
 package com.example.arxivrag.embedding;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 @ConfigurationProperties(prefix = "embedding.ingestion")
+@Validated
 public class EmbeddingIngestionProperties {
 
+    @Positive
     private int batchSize = 100;
 
+    @NotBlank
     private String modelName = "offline-deterministic-1536";
 
+    @Positive
     private int dimensions = 1536;
 
+    @Positive
     private int progressLogInterval = 10;
 
+    @Positive
     private int providerBatchSize = 32;
 
+    @Positive
     private int providerMaxEstimatedTokens = 100_000;
 
+    @Positive
     private int providerMaxEstimatedDocumentTokens = 7_000;
 
     private Integer maxPapers;

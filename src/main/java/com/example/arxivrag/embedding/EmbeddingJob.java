@@ -20,6 +20,14 @@ public record EmbeddingJob(
         Instant startedAt,
         Instant updatedAt,
         Instant completedAt,
-        String lastError
+        String lastError,
+        boolean cancelRequested,
+        Long requestedFromPaperId,
+        Long requestedToPaperId,
+        String requestedCategory,
+        java.time.LocalDate requestedFromDate,
+        java.time.LocalDate requestedToDate,
+        Integer requestedMaxPapers,
+        boolean dryRun
 ) {
 }

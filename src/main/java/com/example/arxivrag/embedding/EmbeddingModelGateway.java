@@ -10,6 +10,10 @@ public interface EmbeddingModelGateway {
 
     List<Double> embed(RetrievalDocument document);
 
+    default List<Double> embed(RetrievalDocument document, EmbeddingWorkClass workClass) {
+        return embed(document);
+    }
+
     /**
      * Embeds a provider-sized batch. Implementations must preserve input order.
      * The default keeps the offline/test gateways backwards compatible while
@@ -20,5 +24,9 @@ public interface EmbeddingModelGateway {
             throw new IllegalArgumentException("documents must not be empty");
         }
         return documents.stream().map(this::embed).toList();
+    }
+
+    default List<List<Double>> embedBatch(List<RetrievalDocument> documents, EmbeddingWorkClass workClass) {
+        return embedBatch(documents);
     }
 }

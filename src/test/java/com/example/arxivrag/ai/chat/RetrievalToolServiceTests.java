@@ -1,20 +1,21 @@
 package com.example.arxivrag.ai.chat;
 
-import com.example.arxivrag.paper.PaperRepository;
-import com.example.arxivrag.vector.SemanticSearchService;
-import org.junit.jupiter.api.Test;
-
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+
+import com.example.arxivrag.paper.PaperRepository;
+import com.example.arxivrag.vector.SemanticSearchService;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
 
 class RetrievalToolServiceTests {
 
     private final RetrievalToolService service = new RetrievalToolService(
             mock(SemanticSearchService.class),
-            mock(PaperRepository.class)
+            mock(PaperRepository.class),
+            new ChatProperties(),
+            new CitationResolver()
     );
 
     @Test

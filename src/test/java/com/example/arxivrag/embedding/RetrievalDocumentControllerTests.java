@@ -1,29 +1,30 @@
 package com.example.arxivrag.embedding;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.example.arxivrag.arxiv.ArxivImportService;
 import com.example.arxivrag.paper.PaperRepository;
+import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
-
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.Path;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 @ActiveProfiles("test")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest
 class RetrievalDocumentControllerTests {
 
-    @LocalServerPort
-    private int port;
+    @Autowired
+    private WebApplicationContext webApplicationContext;
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private MockMvc mockMvc;
 
     @jakarta.annotation.Resource
     private ArxivImportService importService;
@@ -33,44 +34,44 @@ class RetrievalDocumentControllerTests {
 
     @BeforeEach
     void deleteExistingPapers() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
         paperRepository.deleteAll();
     }
 
     @Test
     void previewsRetrievalDocumentWithoutStoredPaper() throws Exception {
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/retrieval-documents/preview"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString("""
+        var response = mockMvc.perform(post("/api/retrieval-documents/preview")
+                        .contentType("application/json")
+                        .content("""
                         {
                           "arxivId": "2401.00001",
                           "title": "Retrieval Testing",
                           "abstractText": "A concise abstract."
                         }
                         """))
-                .build();
+                .andExpect(status().is2xxSuccessful())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
 
-        var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        assertThat(response.statusCode()).isBetween(200, 299);
-        assertThat(response.body()).contains("\"chunkId\":\"title-abstract\"");
-        assertThat(response.body()).contains("Title: Retrieval Testing");
-        assertThat(response.body()).contains("\"contentHash\"");
+        assertThat(response).contains("\"chunkId\":\"title-abstract\"");
+        assertThat(response).contains("Title: Retrieval Testing");
+        assertThat(response).contains("\"contentHash\"");
     }
 
     @Test
     void createsRetrievalDocumentFromImportedPaper() throws Exception {
         importService.importDataset(Path.of("src/test/resources/fixtures/arxiv-tiny.jsonl"));
 
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/retrieval-documents/papers/2401.00001"))
-                .GET()
-                .build();
+        var response = mockMvc.perform(get("/api/retrieval-documents/papers/2401.00001"))
+                .andExpect(status().is2xxSuccessful())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
 
-        var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        assertThat(response.statusCode()).isBetween(200, 299);
-        assertThat(response.body()).contains("\"arxivId\":\"2401.00001\"");
-        assertThat(response.body()).contains("\"chunkId\":\"title-abstract\"");
-        assertThat(response.body()).contains("Title: Retrieval Testing");
-        assertThat(response.body()).contains("\"categories\":[\"cs.CL\",\"cs.AI\"]");
+        assertThat(response).contains("\"arxivId\":\"2401.00001\"");
+        assertThat(response).contains("\"chunkId\":\"title-abstract\"");
+        assertThat(response).contains("Title: Retrieval Testing");
+        assertThat(response).contains("\"categories\":[\"cs.CL\",\"cs.AI\"]");
     }
 }

@@ -1,12 +1,11 @@
 package com.example.arxivrag.embedding;
 
-import com.example.arxivrag.paper.Paper;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.arxivrag.paper.Paper;
 import java.time.LocalDate;
 import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 class RetrievalDocumentFactoryTests {
 

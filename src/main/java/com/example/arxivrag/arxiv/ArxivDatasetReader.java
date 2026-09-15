@@ -1,15 +1,14 @@
 package com.example.arxivrag.arxiv;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
-import tools.jackson.databind.ObjectMapper;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.function.Predicate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class ArxivDatasetReader {
@@ -26,6 +25,7 @@ public class ArxivDatasetReader {
         var recordsRead = 0L;
         var invalidRecords = 0L;
         var lineNumber = 0L;
+        var malformedLineSamples = new java.util.ArrayList<Long>(5);
 
         try (BufferedReader reader = Files.newBufferedReader(datasetPath)) {
             String line;
@@ -43,6 +43,7 @@ public class ArxivDatasetReader {
                     }
                 } catch (Exception exception) {
                     invalidRecords++;
+                    if (malformedLineSamples.size() < 5) malformedLineSamples.add(lineNumber);
                     if (malformedRecordPolicy == ArxivImportProperties.MalformedRecordPolicy.FAIL_FAST) {
                         throw new ArxivImportException("Failed to parse arXiv JSONL record at line " + lineNumber, exception);
                     }
@@ -53,9 +54,12 @@ public class ArxivDatasetReader {
             throw new ArxivImportException("Failed to read arXiv dataset file: " + datasetPath, exception);
         }
 
-        return new ReadResult(recordsRead, invalidRecords);
+        return new ReadResult(recordsRead, invalidRecords, java.util.List.copyOf(malformedLineSamples));
     }
 
-    public record ReadResult(long recordsRead, long invalidRecords) {
+    public record ReadResult(long recordsRead, long invalidRecords, java.util.List<Long> malformedLineSamples) {
+        public ReadResult(long recordsRead, long invalidRecords) {
+            this(recordsRead, invalidRecords, java.util.List.of());
+        }
     }
 }

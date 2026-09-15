@@ -1,12 +1,11 @@
 package com.example.arxivrag.embedding;
 
-import org.springframework.stereotype.Component;
-
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Locale;
 import java.util.concurrent.locks.ReentrantLock;
+import javax.sql.DataSource;
+import org.springframework.stereotype.Component;
 
 /** Prevents duplicate remote embedding work in a local or single-node deployment. */
 @Component

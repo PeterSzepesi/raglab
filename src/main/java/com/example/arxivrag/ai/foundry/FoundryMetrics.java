@@ -3,10 +3,10 @@ package com.example.arxivrag.ai.foundry;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.springframework.stereotype.Component;
-
 import java.time.Duration;
 import java.util.EnumMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.stereotype.Component;
 
 @Component
 public class FoundryMetrics {
@@ -35,6 +35,18 @@ public class FoundryMetrics {
 
     public void quotaWait(FoundryOperation operation, Duration duration) {
         quotaWait.get(operation).record(duration);
+    }
+
+    public void registerQueueDepth(FoundryOperation operation, AtomicInteger depth) {
+        io.micrometer.core.instrument.Gauge.builder("rag.foundry.queue.depth", depth, AtomicInteger::get)
+                .tag("work_class", operation.background() ? "bulk" : "interactive")
+                .tag("operation", operation.metricName()).register(registry);
+    }
+
+    public void capacityRejected(FoundryOperation operation) {
+        Counter.builder("rag.foundry.capacity.rejected")
+                .tag("work_class", operation.background() ? "bulk" : "interactive")
+                .tag("operation", operation.metricName()).register(registry).increment();
     }
 
     public void retry(FoundryOperation operation, int statusCode, Duration delay) {

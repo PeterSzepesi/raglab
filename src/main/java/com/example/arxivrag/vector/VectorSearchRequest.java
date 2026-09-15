@@ -1,7 +1,7 @@
 package com.example.arxivrag.vector;
 
-import java.util.List;
 import java.time.LocalDate;
+import java.util.List;
 
 public record VectorSearchRequest(
         String embeddingModel,

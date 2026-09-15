@@ -1,29 +1,31 @@
 package com.example.arxivrag.ai.foundry;
 
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import tools.jackson.databind.ObjectMapper;
-
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpHeaders;
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.List;
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+import java.io.ByteArrayInputStream;
+import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.ObjectMapper;
 
 class FoundryClientHttpTests {
 
@@ -199,6 +201,24 @@ class FoundryClientHttpTests {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void retriesTransientNetworkFailureWithinTheSingleRetryBudget() throws Exception {
+        var properties = properties();
+        properties.setRetryInitialBackoff(java.time.Duration.ofMillis(1));
+        properties.setRetryMaxBackoff(java.time.Duration.ofMillis(1));
+        var httpClient = mock(HttpClient.class);
+        var success = response(200, "{\"data\":[{\"embedding\":[0.1]}]}");
+        org.mockito.Mockito.doThrow(new IOException("temporary network failure"))
+                .doReturn(success)
+                .when(httpClient).send(any(HttpRequest.class), any());
+
+        var result = new FoundryClient(properties, new ObjectMapper(), httpClient)
+                .embed("text-embedding-3-large", "test", 1);
+
+        assertThat(result).containsExactly(0.1d);
+        verify(httpClient, times(2)).send(any(HttpRequest.class), any());
     }
 
     private static FoundryProperties properties() {

@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
-@RequestMapping("/api/retrieval-documents")
+@RequestMapping({"/api/retrieval-documents", "/api/v1/retrieval-documents"})
 public class RetrievalDocumentController {
 
     private final RetrievalDocumentFactory retrievalDocumentFactory;

@@ -1,14 +1,9 @@
 package com.example.arxivrag.ai.chat;
 
 import com.example.arxivrag.ai.foundry.FoundryProperties;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Profile;
-import org.springframework.stereotype.Component;
-import tools.jackson.databind.ObjectMapper;
-
+import com.example.arxivrag.embedding.EmbeddingIngestionProperties;
+import com.example.arxivrag.search.CorpusGeneration;
+import com.example.arxivrag.search.QueryEmbeddingCache;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -17,6 +12,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
+import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 @Profile("foundry")
@@ -28,19 +31,37 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
     private final ChatProperties properties;
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
+    private final ChatRetrievalCache retrievalCache;
+    private final ChatAnswerCache answerCache;
+    private final QueryEmbeddingCache queryEmbeddingCache;
+    private final EmbeddingIngestionProperties embedding;
+    private final CorpusGeneration corpusGeneration;
+    private final Environment environment;
 
     public ChatBenchmarkCommandLineRunner(
             GroundedChatService chat,
             FoundryProperties foundry,
             ChatProperties properties,
             ObjectMapper objectMapper,
-            ApplicationContext applicationContext
+            ApplicationContext applicationContext,
+            ChatRetrievalCache retrievalCache,
+            ChatAnswerCache answerCache,
+            QueryEmbeddingCache queryEmbeddingCache,
+            EmbeddingIngestionProperties embedding,
+            CorpusGeneration corpusGeneration,
+            Environment environment
     ) {
         this.chat = chat;
         this.foundry = foundry;
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.applicationContext = applicationContext;
+        this.retrievalCache = retrievalCache;
+        this.answerCache = answerCache;
+        this.queryEmbeddingCache = queryEmbeddingCache;
+        this.embedding = embedding;
+        this.corpusGeneration = corpusGeneration;
+        this.environment = environment;
     }
 
     @Override
@@ -52,35 +73,60 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
         var path = command.size() > 1 ? Path.of(command.get(1)) : DEFAULT_CASES;
         var variant = option(args, "variant", "pre-retrieval");
         var deploymentOption = option(args, "deployment", "primary");
+        var cacheOption = option(args, "cache", "both").toLowerCase(Locale.ROOT);
         try {
-            var maxQuestions = Integer.parseInt(option(args, "max-questions", "30"));
+            var maxQuestions = Integer.parseInt(option(args, "max-questions", "36"));
+            var qualityTolerance = Double.parseDouble(option(args, "quality-tolerance", "0.02"));
             if (!List.of("agentic", "pre-retrieval", "streaming").contains(variant.toLowerCase(Locale.ROOT))) {
                 throw new IllegalArgumentException("--variant must be agentic, pre-retrieval, or streaming");
             }
             if (maxQuestions < 1) {
                 throw new IllegalArgumentException("--max-questions must be positive");
             }
+            if (!Double.isFinite(qualityTolerance) || qualityTolerance < 0d || qualityTolerance > 1d) {
+                throw new IllegalArgumentException("--quality-tolerance must be between 0 and 1");
+            }
+            if (!List.of("cold", "warm", "both").contains(cacheOption)) {
+                throw new IllegalArgumentException("--cache must be cold, warm, or both");
+            }
             var cases = readCases(path).stream().limit(maxQuestions).toList();
             var deployments = deployments(deploymentOption);
             var results = new ArrayList<BenchmarkResult>();
             for (var deployment : deployments) {
                 for (var evaluationCase : cases) {
-                    results.add(runCase(evaluationCase, variant, deployment));
+                    if (!"warm".equals(cacheOption)) {
+                        clearCaches();
+                        results.add(runCase(evaluationCase, variant, deployment, "cold"));
+                    }
+                    if (!"cold".equals(cacheOption)) {
+                        clearCaches();
+                        runCase(evaluationCase, variant, deployment, "warmup");
+                        results.add(runCase(evaluationCase, variant, deployment, "warm"));
+                    }
                 }
             }
             var report = report(path, variant, results);
-            var output = Path.of("target", "chat-benchmark-results.json");
+            var baseline = option(args, "baseline", "").trim();
+            BaselineComparison comparison = null;
+            if (!baseline.isEmpty()) {
+                comparison = compareBaseline(Path.of(baseline), results, qualityTolerance);
+                report.put("baselineComparison", comparison);
+            }
+            var output = Path.of("benchmarks", "results", "chat-" +
+                    Instant.now().toString().replace(':', '-') + ".json");
             Files.createDirectories(output.getParent());
             Files.writeString(output, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(report));
             printSummary(report, output);
-            System.exit(SpringApplication.exit(applicationContext, () -> 0));
+            var exitCode = comparison == null || comparison.passed() ? 0 : 2;
+            System.exit(SpringApplication.exit(applicationContext, () -> exitCode));
         } catch (Exception exception) {
             System.err.println("Chat benchmark failed: " + exception.getMessage());
             System.exit(SpringApplication.exit(applicationContext, () -> 1));
         }
     }
 
-    private BenchmarkResult runCase(ChatEvaluationCase evaluationCase, String variant, String deployment) {
+    private BenchmarkResult runCase(ChatEvaluationCase evaluationCase, String variant, String deployment,
+                                    String cacheState) {
         ChatExecution execution;
         var request = evaluationCase.request("agentic".equalsIgnoreCase(variant));
         if ("streaming".equalsIgnoreCase(variant)) {
@@ -94,15 +140,28 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
         var expectedPresent = cited.containsAll(evaluationCase.expectedArxivIds());
         var noEvidenceCorrect = !evaluationCase.expectNoEvidence() || cited.isEmpty();
         var inlineCitationsValid = inlineCitations(response.answer()).stream().allMatch(cited::contains);
+        var expected = evaluationCase.expectedArxivIds();
+        var matches = expected.stream().filter(cited::contains).count();
+        var recallAtK = expected.isEmpty() ? (cited.isEmpty() ? 1d : 0d) : matches / (double) expected.size();
+        var firstRelevant = java.util.stream.IntStream.range(0, cited.size())
+                .filter(index -> expected.contains(cited.get(index))).findFirst();
+        var reciprocalRank = expected.isEmpty() ? 1d : firstRelevant.isPresent() ? 1d / (firstRelevant.getAsInt() + 1d) : 0d;
+        var ndcg = normalizedDiscountedCumulativeGain(cited, expected);
+        var inline = inlineCitations(response.answer());
         return new BenchmarkResult(
-                evaluationCase.id(), variant.toLowerCase(Locale.ROOT), deployment,
+                evaluationCase.id(), variant.toLowerCase(Locale.ROOT), deployment, cacheState,
                 execution.timing().elapsed().toMillis(),
                 execution.timing().milliseconds().getOrDefault(ChatStage.FIRST_TOKEN.metricName(), -1L),
+                execution.timing().milliseconds().getOrDefault(ChatStage.RETRIEVAL.metricName(), 0L),
                 execution.timing().promptTokens(), execution.timing().completionTokens(),
                 execution.timing().reasoningTokens(), execution.timing().cachedPromptTokens(),
                 execution.timing().foundryCalls(), execution.timing().retryCount(), cited,
                 answerModelMs <= 0 ? 0d : execution.timing().completionTokens() * 1000d / answerModelMs,
-                estimatedCost(execution.timing()), expectedPresent, noEvidenceCorrect, inlineCitationsValid);
+                estimatedCost(execution.timing()), recallAtK, reciprocalRank, ndcg,
+                response.citations().stream().allMatch(citation -> citation.url() != null
+                        && citation.url().startsWith("https://arxiv.org/abs/")),
+                inline.stream().filter(value -> !cited.contains(value)).count(),
+                expectedPresent, noEvidenceCorrect, inlineCitationsValid);
     }
 
     private Map<String, Object> report(Path path, String variant, List<BenchmarkResult> results) {
@@ -114,6 +173,15 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
         report.put("createdAt", Instant.now());
         report.put("evaluationFile", path.toString());
         report.put("variant", variant);
+        report.put("applicationCommit", commit());
+        report.put("profile", java.util.Arrays.asList(environment.getActiveProfiles()));
+        report.put("promptVersion", properties.getPromptVersion());
+        report.put("retrievalPolicyVersion", properties.getRetrievalPolicyVersion());
+        report.put("indexVersion", "hnsw-v1");
+        report.put("retrievalDocumentVersion", "title-abstract-v1");
+        report.put("embeddingModel", embedding.getModelName());
+        report.put("embeddingDimension", embedding.getDimensions());
+        report.put("corpusGeneration", corpusGeneration.current());
         var configuration = new LinkedHashMap<String, Object>();
         configuration.put("maxCompletionTokens", properties.getMaxCompletionTokens());
         configuration.put("retrievalTopK", properties.getRetrievalTopK());
@@ -127,6 +195,7 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
     private static Map<String, Object> summary(String deployment, List<BenchmarkResult> values) {
         var latencies = values.stream().map(BenchmarkResult::latencyMilliseconds).sorted().toList();
         var ttft = values.stream().map(BenchmarkResult::ttftMilliseconds).filter(value -> value >= 0).sorted().toList();
+        var search = values.stream().map(BenchmarkResult::searchMilliseconds).sorted().toList();
         var qualityPasses = values.stream().filter(BenchmarkResult::qualityPassed).count();
         var summary = new LinkedHashMap<String, Object>();
         summary.put("deployment", deployment);
@@ -135,8 +204,19 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
         summary.put("latencyP90Ms", percentile(latencies, 0.90));
         summary.put("latencyP95Ms", percentile(latencies, 0.95));
         summary.put("ttftP50Ms", percentile(ttft, 0.50));
+        summary.put("ttftP90Ms", percentile(ttft, 0.90));
         summary.put("ttftP95Ms", percentile(ttft, 0.95));
+        summary.put("searchP50Ms", percentile(search, 0.50));
+        summary.put("searchP90Ms", percentile(search, 0.90));
+        summary.put("searchP95Ms", percentile(search, 0.95));
         summary.put("qualityPassRate", values.isEmpty() ? 0d : qualityPasses / (double) values.size());
+        summary.put("meanRecallAtK", values.stream().mapToDouble(BenchmarkResult::recallAtK).average().orElse(0d));
+        summary.put("meanReciprocalRank", values.stream().mapToDouble(BenchmarkResult::reciprocalRank).average().orElse(0d));
+        summary.put("meanNdcg", values.stream().mapToDouble(BenchmarkResult::normalizedDiscountedCumulativeGain)
+                .average().orElse(0d));
+        summary.put("citationValidityRate", values.stream().mapToDouble(value -> value.citationUrlsValid() ? 1d : 0d)
+                .average().orElse(0d));
+        summary.put("unsupportedCitationCount", values.stream().mapToLong(BenchmarkResult::unsupportedCitationCount).sum());
         summary.put("averageGeneratedTokensPerSecond", values.stream()
                 .mapToDouble(BenchmarkResult::generatedTokensPerSecond).average().orElse(0d));
         summary.put("totalPromptTokens", values.stream().mapToInt(BenchmarkResult::promptTokens).sum());
@@ -173,9 +253,9 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
     }
 
     private String requireCandidate() {
-        var value = properties.getCandidateChatDeployment();
+        var value = foundry.getCandidateChatDeployment();
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException("chat.candidate-chat-deployment is not configured");
+            throw new IllegalArgumentException("foundry.candidate-chat-deployment is not configured");
         }
         return value;
     }
@@ -207,6 +287,60 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
         return sorted.get(Math.max(0, Math.min(index, sorted.size() - 1)));
     }
 
+    static double normalizedDiscountedCumulativeGain(List<String> ranked, List<String> expected) {
+        if (expected == null || expected.isEmpty()) {
+            return ranked == null || ranked.isEmpty() ? 1d : 0d;
+        }
+        var values = ranked == null ? List.<String>of() : ranked;
+        var expectedSet = new java.util.HashSet<>(expected);
+        var seenRelevant = new java.util.HashSet<String>();
+        var dcg = 0d;
+        for (var index = 0; index < values.size(); index++) {
+            if (expectedSet.contains(values.get(index)) && seenRelevant.add(values.get(index))) {
+                dcg += 1d / (Math.log(index + 2d) / Math.log(2d));
+            }
+        }
+        var ideal = 0d;
+        for (var index = 0; index < expectedSet.size(); index++) {
+            ideal += 1d / (Math.log(index + 2d) / Math.log(2d));
+        }
+        return ideal == 0d ? 0d : Math.min(1d, dcg / ideal);
+    }
+
+    private BaselineComparison compareBaseline(Path path, List<BenchmarkResult> current, double tolerance)
+            throws Exception {
+        if (!Files.isRegularFile(path)) {
+            throw new IllegalArgumentException("baseline result does not exist: " + path);
+        }
+        var summaries = objectMapper.readTree(Files.readString(path)).path("summaries");
+        if (!summaries.isArray() || summaries.isEmpty()) {
+            throw new IllegalArgumentException("baseline has no benchmark summaries: " + path);
+        }
+        var baselineRecall = averageField(summaries, "meanRecallAtK");
+        var baselineCitations = averageField(summaries, "citationValidityRate");
+        var currentRecall = current.stream().mapToDouble(BenchmarkResult::recallAtK).average().orElse(0d);
+        var currentCitations = current.stream().mapToDouble(value -> value.citationUrlsValid() ? 1d : 0d)
+                .average().orElse(0d);
+        var recallDecline = baselineRecall - currentRecall;
+        var citationDecline = baselineCitations - currentCitations;
+        return new BaselineComparison(path.toString(), tolerance, baselineRecall, currentRecall,
+                baselineCitations, currentCitations, recallDecline, citationDecline,
+                recallDecline <= tolerance && citationDecline <= tolerance);
+    }
+
+    private static double averageField(tools.jackson.databind.JsonNode values, String field) {
+        var total = 0d;
+        var count = 0;
+        for (var value : values) {
+            if (value.path(field).isNumber()) {
+                total += value.path(field).doubleValue();
+                count++;
+            }
+        }
+        if (count == 0) throw new IllegalArgumentException("baseline does not contain " + field);
+        return total / count;
+    }
+
     private static List<String> inlineCitations(String answer) {
         var matcher = java.util.regex.Pattern.compile("\\[arXiv:([^]\\s]+)]", java.util.regex.Pattern.CASE_INSENSITIVE)
                 .matcher(answer == null ? "" : answer);
@@ -223,15 +357,36 @@ public class ChatBenchmarkCommandLineRunner implements ApplicationRunner {
         System.out.println("Summaries: " + report.get("summaries"));
     }
 
+    private void clearCaches() {
+        retrievalCache.clear();
+        answerCache.clear();
+        queryEmbeddingCache.clear();
+    }
+
+    private static String commit() {
+        var value = System.getenv("GITHUB_SHA");
+        if (value == null || value.isBlank()) value = System.getProperty("rag.build.commit", "working-tree");
+        return value;
+    }
+
     public record BenchmarkResult(
-            String caseId, String variant, String deployment, long latencyMilliseconds, long ttftMilliseconds,
+            String caseId, String variant, String deployment, String cacheState,
+            long latencyMilliseconds, long ttftMilliseconds, long searchMilliseconds,
             int promptTokens, int completionTokens, int reasoningTokens, int cachedPromptTokens,
             int foundryCalls, int retries, List<String> citedArxivIds,
-            double generatedTokensPerSecond, Double estimatedCostUsd,
+            double generatedTokensPerSecond, Double estimatedCostUsd, double recallAtK, double reciprocalRank,
+            double normalizedDiscountedCumulativeGain,
+            boolean citationUrlsValid, long unsupportedCitationCount,
             boolean expectedPapersPresent, boolean noEvidenceCorrect, boolean inlineCitationsValid
     ) {
         public boolean qualityPassed() {
             return expectedPapersPresent && noEvidenceCorrect && inlineCitationsValid;
         }
     }
+
+    public record BaselineComparison(
+            String baselineFile, double tolerance, double baselineRecallAtK, double currentRecallAtK,
+            double baselineCitationValidity, double currentCitationValidity,
+            double recallDecline, double citationValidityDecline, boolean passed
+    ) { }
 }

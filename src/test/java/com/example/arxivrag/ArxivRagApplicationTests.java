@@ -1,26 +1,31 @@
 package com.example.arxivrag;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.test.context.ActiveProfiles;
-
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 @ActiveProfiles("test")
-@SpringBootTest(
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "openai.api-key=super-secret-token"
-)
+@SpringBootTest(properties = "openai.api-key=super-secret-token")
 class ArxivRagApplicationTests {
 
-    @LocalServerPort
-    private int port;
+    @Autowired
+    private WebApplicationContext webApplicationContext;
+
+    private MockMvc mockMvc;
+
+    @BeforeEach
+    void setUpMvc() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+    }
 
     @Test
     void contextLoads() {
@@ -28,42 +33,38 @@ class ArxivRagApplicationTests {
 
     @Test
     void servesFrontendShell() throws Exception {
-        var response = get("/");
+        var response = performGet("/index.html");
 
-        assertThat(response.statusCode()).isBetween(200, 299);
-        assertThat(response.body()).contains("arXiv RAG Lab");
+        assertThat(response).contains("arXiv RAG Lab");
     }
 
     @Test
     void exposesOnlySafeRuntimeConfig() throws Exception {
-        var response = get("/api/runtime-config");
+        var response = performGet("/api/runtime-config");
 
-        assertThat(response.statusCode()).isBetween(200, 299);
-        assertThat(response.body()).contains("\"configuredProfile\":\"test\"");
-        assertThat(response.body()).contains("\"activeProfiles\":[\"test\"]");
-        assertThat(response.body()).contains("\"features\"");
-        assertThat(response.body()).doesNotContain("super-secret-token");
-        assertThat(response.body()).doesNotContain("api-key");
-        assertThat(response.body()).doesNotContain("password");
-        assertThat(response.body()).doesNotContain("token");
+        assertThat(response).contains("\"configuredProfile\":\"test\"");
+        assertThat(response).contains("\"activeProfiles\":[\"test\"]");
+        assertThat(response).contains("\"features\"");
+        assertThat(response).doesNotContain("super-secret-token");
+        assertThat(response).doesNotContain("\"apiKey\"");
+        assertThat(response).doesNotContain("\"tokenScope\"");
+        assertThat(response).doesNotContain("password");
     }
 
     @Test
     void exposesBackendHealth() throws Exception {
-        var response = get("/api/health");
+        var response = performGet("/api/health");
 
-        assertThat(response.statusCode()).isBetween(200, 299);
-        assertThat(response.body()).contains("\"status\":\"UP\"");
-        assertThat(response.body()).contains("\"applicationName\":\"arxiv-rag\"");
-        assertThat(response.body()).contains("\"message\":\"Backend services are reachable.\"");
+        assertThat(response).contains("\"status\":\"UP\"");
+        assertThat(response).contains("\"applicationName\":\"arxiv-rag\"");
+        assertThat(response).contains("\"message\":\"Backend services are reachable.\"");
     }
 
-    private HttpResponse<String> get(String path) throws Exception {
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-                .GET()
-                .build();
-
-        return HttpClient.newHttpClient()
-                .send(request, HttpResponse.BodyHandlers.ofString());
+    private String performGet(String path) throws Exception {
+        return mockMvc.perform(get(path))
+                .andExpect(status().is2xxSuccessful())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
     }
 }

@@ -1,22 +1,28 @@
 package com.example.arxivrag.arxiv;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 @ConfigurationProperties(prefix = "arxiv.import")
+@Validated
 public class ArxivImportProperties {
 
     private List<String> categories = new ArrayList<>(List.of("cs.CL", "cs.AI", "cs.LG", "cs.CV"));
 
     private LocalDate fromDate = LocalDate.of(2022, 1, 1);
 
+    @Positive
     private Integer maxRecords = 50_000;
 
+    @Positive
     private int batchSize = 1_000;
 
+    @NotNull
     private MalformedRecordPolicy malformedRecordPolicy = MalformedRecordPolicy.WARN_AND_SKIP;
 
     public List<String> getCategories() {

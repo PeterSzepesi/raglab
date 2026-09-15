@@ -3,18 +3,19 @@ package com.example.arxivrag.arxiv;
 import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
 import com.example.arxivrag.search.CorpusGeneration;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class ArxivImportService {
@@ -52,6 +53,12 @@ public class ArxivImportService {
     }
 
     public ArxivImportResult importDataset(Path datasetPath) {
+        return importDataset(datasetPath, ArxivImportOptions.from(properties), () -> false, ignored -> { }).result();
+    }
+
+    public ImportExecution importDataset(Path datasetPath, ArxivImportOptions options,
+                                         BooleanSupplier cancellationRequested,
+                                         Consumer<ImportProgress> progressListener) {
         if (!Files.isRegularFile(datasetPath)) {
             throw new ArxivImportException("arXiv dataset file does not exist or is not a file: " + datasetPath);
         }
@@ -60,17 +67,23 @@ public class ArxivImportService {
         }
 
         var startedAt = Instant.now();
-        var state = new ImportState(properties.getBatchSize());
+        var state = new ImportState(properties.getBatchSize(), progressListener);
 
         var readResult = datasetReader.read(datasetPath, properties.getMalformedRecordPolicy(), datasetRecord -> {
-            if (state.hasReachedMaxRecords(properties.getMaxRecords())) {
+            if (cancellationRequested.getAsBoolean()) {
+                state.cancelled = true;
+                return false;
+            }
+            if (state.hasReachedMaxRecords(options.maxRecords())) {
                 return false;
             }
 
             try {
+                state.recordsRead++;
                 var record = datasetRecord.record();
-                if (!recordFilter.accepts(record, properties)) {
+                if (!recordFilter.accepts(record, options.categories(), options.fromDate())) {
                     state.skipped++;
+                    state.publish();
                     return true;
                 }
 
@@ -79,7 +92,7 @@ public class ArxivImportService {
                 if (state.batch.size() >= properties.getBatchSize()) {
                     flush(state);
                 }
-                return !state.hasReachedMaxRecords(properties.getMaxRecords());
+                return !state.hasReachedMaxRecords(options.maxRecords());
             } catch (ArxivImportException exception) {
                 state.invalidRecords++;
                 if (properties.getMalformedRecordPolicy() == ArxivImportProperties.MalformedRecordPolicy.FAIL_FAST) {
@@ -103,7 +116,39 @@ public class ArxivImportService {
         if (result.imported() + result.updated() > 0) {
             corpusGeneration.increment();
         }
-        return result;
+        state.publish(readResult.invalidRecords());
+        return new ImportExecution(result, state.cancelled, readResult.malformedLineSamples());
+    }
+
+    public ArxivImportPreview previewDataset(Path datasetPath, ArxivImportOptions options) {
+        if (!Files.isRegularFile(datasetPath)) {
+            throw new ArxivImportException("arXiv dataset file does not exist or is not a file: " + datasetPath);
+        }
+        var started = Instant.now();
+        var acceptedIds = new ArrayList<String>();
+        var seen = new HashSet<String>();
+        var counts = new long[4]; // read, accepted, filtered, duplicate-in-file
+        var read = datasetReader.read(datasetPath, properties.getMalformedRecordPolicy(), dataset -> {
+            counts[0]++;
+            if (options.maxRecords() != null && counts[1] >= options.maxRecords()) return false;
+            try {
+                var record = dataset.record();
+                if (!recordFilter.accepts(record, options.categories(), options.fromDate())) {
+                    counts[2]++;
+                    return true;
+                }
+                paperMapper.toPaper(record);
+                counts[1]++;
+                if (!seen.add(record.id())) counts[3]++;
+                else acceptedIds.add(record.id());
+                return options.maxRecords() == null || counts[1] < options.maxRecords();
+            } catch (ArxivImportException invalid) {
+                return true;
+            }
+        });
+        var existing = countExisting(acceptedIds);
+        return new ArxivImportPreview(read.recordsRead(), counts[1], counts[2], read.invalidRecords(),
+                counts[3], existing, read.malformedLineSamples(), Duration.between(started, Instant.now()));
     }
 
     void flush(ImportState state) {
@@ -119,6 +164,16 @@ public class ArxivImportService {
             }
         }));
         state.batch.clear();
+        state.publish();
+    }
+
+    private long countExisting(List<String> acceptedIds) {
+        long existing = 0;
+        for (var start = 0; start < acceptedIds.size(); start += 500) {
+            existing += paperRepository.findAllByArxivIdIn(
+                    acceptedIds.subList(start, Math.min(start + 500, acceptedIds.size()))).size();
+        }
+        return existing;
     }
 
     public void upsertBatch(List<Paper> papers, Consumer<UpsertOutcome> outcomeConsumer) {
@@ -171,12 +226,31 @@ public class ArxivImportService {
 
         private long invalidRecords;
 
-        ImportState(int batchSize) {
+        private long recordsRead;
+        private boolean cancelled;
+        private final Consumer<ImportProgress> progressListener;
+
+        ImportState(int batchSize, Consumer<ImportProgress> progressListener) {
             this.batch = new ArrayList<>(batchSize);
+            this.progressListener = progressListener;
         }
 
         boolean hasReachedMaxRecords(Integer maxRecords) {
             return maxRecords != null && accepted >= maxRecords;
         }
+
+        void publish() { publish(0); }
+        void publish(long readerInvalid) {
+            progressListener.accept(new ImportProgress(recordsRead, accepted, imported, updated, skipped,
+                    invalidRecords + readerInvalid));
+        }
     }
+
+    public record ImportExecution(ArxivImportResult result, boolean cancelled,
+                                  List<Long> malformedLineSamples) { }
+    public record ImportProgress(long recordsRead, long accepted, long imported, long updated,
+                                 long skipped, long invalidRecords) { }
+    public record ArxivImportPreview(long recordsRead, long accepted, long filtered, long invalidRecords,
+                                     long duplicateInFile, long alreadyStored, List<Long> malformedLineSamples,
+                                     Duration elapsed) { }
 }

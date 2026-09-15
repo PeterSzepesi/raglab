@@ -1,11 +1,10 @@
 package com.example.arxivrag.ai.foundry;
 
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.Duration;
+import org.junit.jupiter.api.Test;
 
 class FoundryQuotaLimiterTests {
 

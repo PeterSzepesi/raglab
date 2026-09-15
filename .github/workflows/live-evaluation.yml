@@ -1,0 +1,48 @@
+name: Manual Foundry evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_questions:
+        description: Maximum paid benchmark cases (1-5)
+        required: true
+        default: '5'
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-live-evaluation:
+    runs-on: ubuntu-latest
+    environment: foundry-evaluation
+    env:
+      AZURE_AI_FOUNDRY_ENDPOINT: ${{ secrets.AZURE_AI_FOUNDRY_ENDPOINT }}
+      AZURE_AI_FOUNDRY_API_KEY: ${{ secrets.AZURE_AI_FOUNDRY_API_KEY }}
+      AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT }}
+      AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Enforce paid-case safety limit
+        shell: bash
+        run: test '${{ inputs.max_questions }}' -ge 1 && test '${{ inputs.max_questions }}' -le 5
+      - name: Start PostgreSQL
+        run: docker compose up -d --wait postgres
+      - name: Build without making provider calls
+        run: ./mvnw --batch-mode --no-transfer-progress package
+      - name: Import tiny deterministic corpus
+        run: java -jar target/arxiv-rag-0.0.1-SNAPSHOT.jar --spring.profiles.active=foundry import-arxiv src/test/resources/fixtures/arxiv-tiny.jsonl
+      - name: Embed at most five papers
+        run: java -jar target/arxiv-rag-0.0.1-SNAPSHOT.jar --spring.profiles.active=foundry embed-papers --max-papers=5
+      - name: Run bounded cold and warm evaluation
+        run: java -jar target/arxiv-rag-0.0.1-SNAPSHOT.jar --spring.profiles.active=foundry chat-benchmark --max-questions=${{ inputs.max_questions }} --cache=both
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-foundry-benchmark
+          path: benchmarks/results/*.json
+          if-no-files-found: warn

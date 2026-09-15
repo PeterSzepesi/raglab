@@ -1,8 +1,6 @@
 package com.example.arxivrag.arxiv;
 
 import com.example.arxivrag.paper.Paper;
-import org.springframework.stereotype.Component;
-
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
@@ -12,6 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import org.springframework.stereotype.Component;
 
 @Component
 public class PaperMapper {

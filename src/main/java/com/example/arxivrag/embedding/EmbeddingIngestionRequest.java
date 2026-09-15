@@ -1,8 +1,7 @@
 package com.example.arxivrag.embedding;
 
-import org.springframework.boot.ApplicationArguments;
-
 import java.time.LocalDate;
+import org.springframework.boot.ApplicationArguments;
 
 /** Immutable controls for a bounded, repeatable embedding run. */
 public record EmbeddingIngestionRequest(

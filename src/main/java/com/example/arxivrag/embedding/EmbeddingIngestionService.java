@@ -2,22 +2,21 @@ package com.example.arxivrag.embedding;
 
 import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
+import com.example.arxivrag.search.CorpusGeneration;
 import com.example.arxivrag.vector.EmbeddedDocument;
 import com.example.arxivrag.vector.VectorStoreGateway;
-import com.example.arxivrag.search.CorpusGeneration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class EmbeddingIngestionService {
@@ -36,6 +35,7 @@ public class EmbeddingIngestionService {
     private final EmbeddingJobLock jobLock;
     private final EmbeddingMetrics metrics;
     private final CorpusGeneration corpusGeneration;
+    private final String ownerId = UUID.randomUUID().toString();
 
     public EmbeddingIngestionService(
             PaperRepository paperRepository,
@@ -70,25 +70,33 @@ public class EmbeddingIngestionService {
     }
 
     public EmbeddingIngestionResult ingest(EmbeddingIngestionRequest request) {
+        return ingest(request, null);
+    }
+
+    public UUID prepare(EmbeddingIngestionRequest request) {
+        validateConfiguration(request);
+        return jobRepository.createQueued(request, embeddingModel.modelName(), embeddingModel.dimensions(),
+                RetrievalDocumentFactory.DOCUMENT_SCHEMA_VERSION);
+    }
+
+    public EmbeddingIngestionResult ingest(EmbeddingIngestionRequest request, UUID preparedJobId) {
         validateConfiguration(request);
         try (var ignored = jobLock.acquire()) {
-            return ingestWithLock(request);
+            return ingestWithLock(request, preparedJobId);
         }
     }
 
-    private EmbeddingIngestionResult ingestWithLock(EmbeddingIngestionRequest request) {
+    private EmbeddingIngestionResult ingestWithLock(EmbeddingIngestionRequest request, UUID preparedJobId) {
         var startedAt = Instant.now();
         var candidateCount = paperRepository.countEmbeddingCandidates(
                 request.fromPaperId(), request.toPaperId(), request.category(), request.fromDate(), request.toDate());
         var totalPapers = request.maxPapers() == null
                 ? candidateCount
                 : Math.min(candidateCount, request.maxPapers());
-        var jobId = jobRepository.create(
-                totalPapers,
-                embeddingModel.modelName(),
-                embeddingModel.dimensions(),
-                RetrievalDocumentFactory.DOCUMENT_SCHEMA_VERSION
-        );
+        var jobId = preparedJobId == null ? prepare(request) : preparedJobId;
+        if (!jobRepository.claim(jobId, totalPapers, ownerId)) {
+            throw new IllegalStateException("Embedding job " + jobId + " is not claimable");
+        }
         var state = new IngestionState();
         progress.start(jobId, totalPapers, embeddingModel.modelName(), embeddingModel.dimensions(), properties.getBatchSize());
         LOGGER.info("Starting embedding job {}: papers={}, model={}, dimension={}, databaseBatchSize={}, providerBatchSize={}, filters={}",
@@ -99,6 +107,7 @@ public class EmbeddingIngestionService {
             if (!request.dryRun()) {
                 Long afterId = null;
                 while (state.papersScanned < totalPapers) {
+                    checkCancellation(jobId);
                     var pageSize = (int) Math.min(properties.getBatchSize(), totalPapers - state.papersScanned);
                     var papers = paperRepository.findEmbeddingPage(
                             afterId, request.fromPaperId(), request.toPaperId(), request.category(),
@@ -110,7 +119,7 @@ public class EmbeddingIngestionService {
                     processPage(papers, state, jobId);
                     afterId = papers.getLast().getId();
                     progress.markLastPaper(afterId);
-                    jobRepository.updateProgress(jobId, progress.snapshot(), afterId);
+                    jobRepository.updateProgress(jobId, ownerId, progress.snapshot(), afterId);
                 }
             } else {
                 state.papersScanned = totalPapers;
@@ -118,12 +127,12 @@ public class EmbeddingIngestionService {
                 for (var index = 0; index < totalPapers; index++) {
                     progress.markScanned();
                 }
-                jobRepository.updateProgress(jobId, progress.snapshot(), null);
+                jobRepository.updateProgress(jobId, ownerId, progress.snapshot(), null);
                 LOGGER.info("Embedding dry run {}: eligible papers={}", jobId, totalPapers);
             }
 
             progress.complete();
-            jobRepository.complete(jobId, progress.snapshot());
+            jobRepository.complete(jobId, ownerId, progress.snapshot());
             var elapsed = Duration.between(startedAt, Instant.now());
             if (state.embedded > 0) {
                 corpusGeneration.increment();
@@ -143,8 +152,19 @@ public class EmbeddingIngestionService {
                     state.providerRequests, state.failures
             );
         } catch (RuntimeException exception) {
+            if (exception instanceof EmbeddingJobCancelledException
+                    || Thread.currentThread().isInterrupted()
+                    || cancellationRequested(jobId)) {
+                progress.cancel();
+                jobRepository.cancel(jobId, ownerId, progress.snapshot());
+                LOGGER.info("Embedding job {} cancelled after scanned={}, embedded={}, skipped={}",
+                        jobId, state.papersScanned, state.embedded, state.skipped);
+                throw exception instanceof EmbeddingJobCancelledException
+                        ? exception
+                        : new EmbeddingJobCancelledException("Embedding job cancelled", exception);
+            }
             progress.fail(exception);
-            jobRepository.fail(jobId, progress.snapshot(), exception);
+            jobRepository.fail(jobId, ownerId, progress.snapshot(), exception);
             LOGGER.error("Embedding job {} failed after scanned={}, embedded={}, skipped={}: {}",
                     jobId, state.papersScanned, state.embedded, state.skipped, exception.getMessage(), exception);
             throw exception;
@@ -152,6 +172,7 @@ public class EmbeddingIngestionService {
     }
 
     private void processPage(List<Paper> papers, IngestionState state, UUID jobId) {
+        checkCancellation(jobId);
         var documents = papers.stream().map(retrievalDocumentFactory::fromPaper).toList();
         var checkpointIds = documents.stream().map(this::checkpointId).toList();
         var existingIds = new HashSet<EmbeddingCheckpointId>();
@@ -177,11 +198,13 @@ public class EmbeddingIngestionService {
                 properties.getProviderBatchSize(),
                 properties.getProviderMaxEstimatedTokens(),
                 properties.getProviderMaxEstimatedDocumentTokens())) {
+            checkCancellation(jobId);
             progress.providerRequestStarted();
+            jobRepository.markWaitingForProvider(jobId, ownerId, progress.snapshot());
             var requestStartedAt = Instant.now();
             List<List<Double>> vectors;
             try {
-                vectors = embeddingModel.embedBatch(providerBatch);
+                vectors = embeddingModel.embedBatch(providerBatch, EmbeddingWorkClass.BULK);
             } catch (RuntimeException exception) {
                 progress.providerRequestFailed();
                 metrics.providerFailure();
@@ -189,6 +212,7 @@ public class EmbeddingIngestionService {
                 throw exception;
             }
             progress.providerRequestCompleted(Duration.between(requestStartedAt, Instant.now()).toMillis());
+            jobRepository.markRunning(jobId, ownerId, progress.snapshot());
             metrics.providerRequest(Duration.between(requestStartedAt, Instant.now()));
             state.providerRequests++;
             if (vectors.size() != providerBatch.size()) {
@@ -227,7 +251,7 @@ public class EmbeddingIngestionService {
             metrics.embedded(embeddedDocuments.size());
             embeddedDocuments.forEach(document -> progress.markEmbedded());
             progress.markLastPaper(providerBatch.getLast().paperId());
-            jobRepository.updateProgress(jobId, progress.snapshot(), providerBatch.getLast().paperId());
+            jobRepository.updateProgress(jobId, ownerId, progress.snapshot(), providerBatch.getLast().paperId());
             logProgressIfDue();
         }
     }
@@ -248,6 +272,20 @@ public class EmbeddingIngestionService {
         }
         if (properties.getProgressLogInterval() <= 0) {
             throw new IllegalStateException("embedding.ingestion.progress-log-interval must be greater than zero");
+        }
+    }
+
+    private void checkCancellation(UUID jobId) {
+        if (Thread.currentThread().isInterrupted() || cancellationRequested(jobId)) {
+            throw new EmbeddingJobCancelledException("Embedding job cancellation requested");
+        }
+    }
+
+    private boolean cancellationRequested(UUID jobId) {
+        try {
+            return jobRepository.isCancellationRequested(jobId);
+        } catch (RuntimeException ignored) {
+            return false;
         }
     }
 
@@ -275,5 +313,15 @@ public class EmbeddingIngestionService {
         private long skipped;
         private long failures;
         private long providerRequests;
+    }
+
+    public static final class EmbeddingJobCancelledException extends RuntimeException {
+        public EmbeddingJobCancelledException(String message) {
+            super(message);
+        }
+
+        public EmbeddingJobCancelledException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

@@ -1,11 +1,13 @@
 package com.example.arxivrag.ai.chat;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
 public record ChatRequest(
-        String message,
+        @NotBlank @Size(max = 8000) String message,
         String retrievalMode,
-        String category,
+        @Size(max = 64) String category,
         LocalDate fromDate,
         LocalDate toDate,
         Boolean agentic

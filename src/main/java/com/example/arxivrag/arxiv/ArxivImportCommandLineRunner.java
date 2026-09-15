@@ -1,12 +1,11 @@
 package com.example.arxivrag.arxiv;
 
+import java.nio.file.Path;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
-
-import java.nio.file.Path;
 
 @Component
 public class ArxivImportCommandLineRunner implements ApplicationRunner {

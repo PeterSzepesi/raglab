@@ -1,9 +1,7 @@
 package com.example.arxivrag.ai.chat;
 
-import org.springframework.stereotype.Component;
-
-import java.util.Set;
 import java.util.regex.Pattern;
+import org.springframework.stereotype.Component;
 
 @Component
 public class GroundedAnswerSanitizer {

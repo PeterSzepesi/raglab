@@ -4,10 +4,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.springframework.stereotype.Component;
-
 import java.time.Duration;
 import java.util.EnumMap;
+import org.springframework.stereotype.Component;
 
 @Component
 public class ChatMetrics {

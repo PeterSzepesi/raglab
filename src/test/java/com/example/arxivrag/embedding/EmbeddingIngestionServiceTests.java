@@ -1,17 +1,16 @@
 package com.example.arxivrag.embedding;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.example.arxivrag.arxiv.ArxivImportService;
 import com.example.arxivrag.paper.PaperRepository;
-import com.example.arxivrag.vector.VectorStoreGateway;
 import com.example.arxivrag.vector.InMemoryVectorStoreGateway;
+import com.example.arxivrag.vector.VectorStoreGateway;
+import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-
-import java.nio.file.Path;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 @ActiveProfiles("test")
 @SpringBootTest

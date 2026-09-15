@@ -1,54 +1,81 @@
 package com.example.arxivrag.ai.foundry;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 @ConfigurationProperties(prefix = "foundry")
+@Validated
 public class FoundryProperties {
 
     private String endpoint = "";
 
     private String apiKey = "";
 
+    private String authenticationMode = "api-key";
+
+    private String tokenScope = "https://ai.azure.com/.default";
+
     private String apiVersion = "2024-10-21";
 
     private String chatDeployment = "gpt-5.6-luna";
 
+    private String candidateChatDeployment = "";
+
     private String embeddingDeployment = "text-embedding-3-large";
 
+    @NotNull
     private Duration requestTimeout = Duration.ofSeconds(120);
 
+    @Positive
     private int maxRequestsPerMinute = 150;
 
+    @Positive
     private int maxTokensPerMinute = 150_000;
 
+    @Positive
     private int chatMaxRequestsPerMinute = 150;
 
+    @Positive
     private int chatMaxTokensPerMinute = 150_000;
 
+    @Positive
     private int embeddingMaxRequestsPerMinute = 150;
 
+    @Positive
     private int embeddingMaxTokensPerMinute = 150_000;
 
+    @PositiveOrZero
     private int maxRetries = 3;
 
+    @PositiveOrZero
     private int chatMaxRetries = 1;
 
+    @PositiveOrZero
     private int queryEmbeddingMaxRetries = 1;
 
+    @PositiveOrZero
     private int interactiveReservedRequestsPerMinute = 10;
 
+    @PositiveOrZero
     private int interactiveReservedTokensPerMinute = 10_000;
 
+    @NotNull
     private Duration chatMaxQuotaWait = Duration.ofSeconds(2);
 
+    @NotNull
     private Duration queryEmbeddingMaxQuotaWait = Duration.ofSeconds(2);
 
+    @NotNull
     private Duration ingestionEmbeddingMaxQuotaWait = Duration.ofSeconds(60);
 
+    @NotNull
     private Duration retryInitialBackoff = Duration.ofSeconds(1);
 
+    @NotNull
     private Duration retryMaxBackoff = Duration.ofSeconds(10);
 
     public String getEndpoint() {
@@ -67,6 +94,11 @@ public class FoundryProperties {
         this.apiKey = apiKey;
     }
 
+    public String getAuthenticationMode() { return authenticationMode; }
+    public void setAuthenticationMode(String authenticationMode) { this.authenticationMode = authenticationMode; }
+    public String getTokenScope() { return tokenScope; }
+    public void setTokenScope(String tokenScope) { this.tokenScope = tokenScope; }
+
     public String getApiVersion() {
         return apiVersion;
     }
@@ -81,6 +113,14 @@ public class FoundryProperties {
 
     public void setChatDeployment(String chatDeployment) {
         this.chatDeployment = chatDeployment;
+    }
+
+    public String getCandidateChatDeployment() {
+        return candidateChatDeployment;
+    }
+
+    public void setCandidateChatDeployment(String value) {
+        this.candidateChatDeployment = value;
     }
 
     public String getEmbeddingDeployment() {

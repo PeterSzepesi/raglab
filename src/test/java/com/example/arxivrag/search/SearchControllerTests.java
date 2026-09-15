@@ -1,16 +1,14 @@
 package com.example.arxivrag.search;
 
-import com.example.arxivrag.vector.SemanticSearchResult;
-import com.example.arxivrag.vector.SemanticSearchService;
-import org.junit.jupiter.api.Test;
-
-import java.time.LocalDate;
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+
+import com.example.arxivrag.vector.SemanticSearchService;
+import java.time.LocalDate;
+import java.util.List;
+import org.junit.jupiter.api.Test;
 
 class SearchControllerTests {
 
@@ -40,5 +38,15 @@ class SearchControllerTests {
         assertThatThrownBy(() -> controller.search(new SearchRequest("query", 51, null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("between 1 and 50");
+    }
+
+    @Test
+    void rejectsContradictoryDateRangeBeforeSearching() {
+        var controller = new SearchController(mock(SemanticSearchService.class));
+
+        assertThatThrownBy(() -> controller.search(new SearchRequest("query", 5, null,
+                LocalDate.of(2025, 1, 1), LocalDate.of(2024, 1, 1))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("fromDate");
     }
 }

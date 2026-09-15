@@ -15,13 +15,16 @@ rag:
     search-enabled: true
     chat-enabled: true
     vector-stores-enabled: true
-    benchmarks-enabled: false
+    benchmarks-enabled: ${RAG_BENCHMARKS_UI_ENABLED:true}
 
 foundry:
   endpoint: ${AZURE_AI_FOUNDRY_ENDPOINT:https://models-for-peter-resource.services.ai.azure.com}
   api-key: ${AZURE_AI_FOUNDRY_API_KEY:}
+  authentication-mode: ${AZURE_AI_FOUNDRY_AUTHENTICATION_MODE:api-key}
+  token-scope: ${AZURE_AI_FOUNDRY_TOKEN_SCOPE:https://ai.azure.com/.default}
   api-version: ${AZURE_AI_FOUNDRY_API_VERSION:2024-10-21}
   chat-deployment: ${AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT:gpt-5.6-luna}
+  candidate-chat-deployment: ${AZURE_AI_FOUNDRY_CANDIDATE_CHAT_DEPLOYMENT:}
   embedding-deployment: ${AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT:text-embedding-3-large}
   request-timeout: ${AZURE_AI_FOUNDRY_REQUEST_TIMEOUT:120s}
   max-requests-per-minute: ${FOUNDRY_MAX_REQUESTS_PER_MINUTE:150}
@@ -64,12 +67,20 @@ chat:
   max-completion-tokens: ${RAG_CHAT_MAX_COMPLETION_TOKENS:400}
   streaming-enabled: ${RAG_CHAT_STREAMING_ENABLED:true}
   streaming-timeout: ${RAG_CHAT_STREAMING_TIMEOUT:90s}
+  request-deadline: ${RAG_CHAT_REQUEST_DEADLINE:90s}
   cache-enabled: ${RAG_CHAT_CACHE_ENABLED:true}
   cache-ttl: ${RAG_CHAT_CACHE_TTL:10m}
+  negative-cache-ttl: ${RAG_CHAT_NEGATIVE_CACHE_TTL:45s}
   cache-maximum-size: ${RAG_CHAT_CACHE_MAXIMUM_SIZE:1000}
+  retrieval-policy-version: ${RAG_CHAT_RETRIEVAL_POLICY_VERSION:retrieval-v1}
+  prompt-version: ${RAG_CHAT_PROMPT_VERSION:grounded-v1}
+  reasoning-effort: ${RAG_CHAT_REASONING_EFFORT:none}
+  provider-prompt-cache-enabled: ${RAG_CHAT_PROVIDER_PROMPT_CACHE_ENABLED:false}
+  answer-cache-enabled: ${RAG_CHAT_ANSWER_CACHE_ENABLED:false}
+  answer-cache-ttl: ${RAG_CHAT_ANSWER_CACHE_TTL:5m}
+  answer-cache-maximum-size: ${RAG_CHAT_ANSWER_CACHE_MAXIMUM_SIZE:250}
   max-parallel-tool-calls: ${RAG_CHAT_MAX_PARALLEL_TOOL_CALLS:3}
   debug-timings: ${RAG_CHAT_DEBUG_TIMINGS:false}
-  candidate-chat-deployment: ${AZURE_AI_FOUNDRY_CANDIDATE_CHAT_DEPLOYMENT:}
   benchmark-input-price-per-million-tokens: ${RAG_CHAT_BENCHMARK_INPUT_PRICE_PER_MILLION:}
   benchmark-cached-input-price-per-million-tokens: ${RAG_CHAT_BENCHMARK_CACHED_INPUT_PRICE_PER_MILLION:}
   benchmark-output-price-per-million-tokens: ${RAG_CHAT_BENCHMARK_OUTPUT_PRICE_PER_MILLION:}

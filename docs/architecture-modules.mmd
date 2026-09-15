@@ -1,0 +1,28 @@
+flowchart LR
+    WEB[Web / HTTP and SSE adapters]
+    CONVERSATION[Conversation]
+    RETRIEVAL[Retrieval]
+    CATALOG[Catalog and import]
+    INDEXING[Indexing and durable jobs]
+    MODEL[Model API and Foundry/offline adapters]
+    OPERATIONS[Operations and configuration]
+    DATABASE[(PostgreSQL + pgvector)]
+
+    WEB --> CONVERSATION
+    WEB --> RETRIEVAL
+    WEB --> CATALOG
+    WEB --> INDEXING
+    CONVERSATION --> RETRIEVAL
+    CONVERSATION --> MODEL
+    RETRIEVAL --> CATALOG
+    RETRIEVAL --> MODEL
+    INDEXING --> CATALOG
+    INDEXING --> RETRIEVAL
+    INDEXING --> MODEL
+    CATALOG --> DATABASE
+    RETRIEVAL --> DATABASE
+    INDEXING --> DATABASE
+    OPERATIONS -. observes .-> CONVERSATION
+    OPERATIONS -. observes .-> RETRIEVAL
+    OPERATIONS -. observes .-> INDEXING
+    OPERATIONS -. observes .-> MODEL

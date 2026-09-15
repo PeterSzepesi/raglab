@@ -4,6 +4,7 @@ This folder contains both the current project contract and older experiment note
 
 ## Current source of truth
 
+- `docs/implementation/improvements-summary.docx` — formatted explanation of the current large improvement set, its motivation, benefits, and intentionally deferred scale features.
 - `docs/project-brief.md` — product goal, current starting point, target architecture, and experiment strategy.
 - `docs/decisions.md` — pinned v1 technical decisions and explicit alternatives to evaluate separately.
 - `docs/architecture.md` — current executable architecture plus proposed package boundaries.

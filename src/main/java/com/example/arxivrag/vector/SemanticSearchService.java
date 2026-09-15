@@ -1,19 +1,16 @@
 package com.example.arxivrag.vector;
 
 import com.example.arxivrag.embedding.EmbeddingModelGateway;
+import com.example.arxivrag.embedding.EmbeddingWorkClass;
 import com.example.arxivrag.embedding.RetrievalDocumentFactory;
 import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
-import com.example.arxivrag.ai.chat.ChatProperties;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
-
+import com.example.arxivrag.search.QueryEmbeddingCache;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.time.LocalDate;
+import org.springframework.stereotype.Service;
 
 @Service
 public class SemanticSearchService {
@@ -32,45 +29,20 @@ public class SemanticSearchService {
 
     private final SearchMetrics metrics;
 
-    private final Cache<QueryEmbeddingKey, java.util.List<Double>> queryEmbeddings;
-
-    private final boolean queryEmbeddingCacheEnabled;
+    private final QueryEmbeddingCache queryEmbeddings;
 
     public SemanticSearchService(
             EmbeddingModelGateway embeddingModel,
             RetrievalDocumentFactory retrievalDocumentFactory,
-            VectorStoreGateway vectorStoreGateway,
-            PaperRepository paperRepository
-    ) {
-        this(embeddingModel, retrievalDocumentFactory, vectorStoreGateway, paperRepository,
-                null, new ChatProperties(), null);
-    }
-
-    @Autowired
-    public SemanticSearchService(
-            EmbeddingModelGateway embeddingModel,
-            RetrievalDocumentFactory retrievalDocumentFactory,
-            VectorStoreGateway vectorStoreGateway,
-            PaperRepository paperRepository,
-            SearchMetrics metrics,
-            ChatProperties chatProperties,
-            io.micrometer.core.instrument.MeterRegistry meterRegistry
+            VectorStoreGateway vectorStoreGateway, PaperRepository paperRepository,
+            SearchMetrics metrics, QueryEmbeddingCache queryEmbeddings
     ) {
         this.embeddingModel = embeddingModel;
         this.retrievalDocumentFactory = retrievalDocumentFactory;
         this.vectorStoreGateway = vectorStoreGateway;
         this.paperRepository = paperRepository;
         this.metrics = metrics;
-        this.queryEmbeddingCacheEnabled = chatProperties.isCacheEnabled();
-        this.queryEmbeddings = Caffeine.newBuilder()
-                .maximumSize(chatProperties.getCacheMaximumSize())
-                .expireAfterWrite(chatProperties.getCacheTtl())
-                .recordStats()
-                .build();
-        if (meterRegistry != null) {
-            io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics.monitor(
-                    meterRegistry, queryEmbeddings, "rag.search.query.embedding.cache");
-        }
+        this.queryEmbeddings = queryEmbeddings;
     }
 
     public java.util.List<SemanticSearchResult> search(String query) {
@@ -105,7 +77,9 @@ public class SemanticSearchService {
     ) {
         var timer = metrics == null ? null : metrics.start();
         try {
-            return searchInternal(query, topK, category, fromDate, toDate, observer);
+            var results = searchInternal(query, topK, category, fromDate, toDate, observer);
+            if (metrics != null) metrics.results("semantic", results);
+            return results;
         } catch (RuntimeException exception) {
             if (metrics != null) {
                 metrics.failure();
@@ -143,12 +117,11 @@ public class SemanticSearchService {
         }
 
         var queryDocument = retrievalDocumentFactory.forQuery(query);
-        var cacheKey = new QueryEmbeddingKey(query.trim().toLowerCase(java.util.Locale.ROOT),
+        var cacheKey = new QueryEmbeddingCache.Key(query.trim().toLowerCase(java.util.Locale.ROOT),
                 embeddingModel.modelName(), embeddingModel.dimensions(), RetrievalDocumentFactory.DOCUMENT_SCHEMA_VERSION);
         var queryEmbedding = measure(SearchStage.QUERY_EMBEDDING, observer,
-                () -> queryEmbeddingCacheEnabled
-                        ? queryEmbeddings.get(cacheKey, ignored -> embeddingModel.embed(queryDocument))
-                        : embeddingModel.embed(queryDocument));
+                () -> queryEmbeddings.getOrLoad(cacheKey,
+                        () -> embeddingModel.embed(queryDocument, EmbeddingWorkClass.INTERACTIVE)));
         if (queryEmbedding.size() != embeddingModel.dimensions()) {
             throw new IllegalStateException("Embedding model returned " + queryEmbedding.size()
                     + " dimensions, expected " + embeddingModel.dimensions());
@@ -167,6 +140,14 @@ public class SemanticSearchService {
         )));
         if (vectorHits.isEmpty()) {
             return java.util.List.of();
+        }
+
+        if (vectorHits.stream().allMatch(VectorSearchResult::hasPaperProjection)) {
+            return vectorHits.stream()
+                    .map(SemanticSearchService::toProjectedResult)
+                    .filter(result -> matches(result, category, fromDate, toDate))
+                    .limit(topK)
+                    .toList();
         }
 
         var papersById = measure(SearchStage.PAPER_HYDRATION, observer, () -> paperRepository.findAllById(vectorHits.stream()
@@ -202,15 +183,55 @@ public class SemanticSearchService {
                 Math.max(0, preparationMs), planMs, plan);
     }
 
+    public VectorRecallDiagnostics compareRecall(
+            String query,
+            int topK,
+            String category,
+            LocalDate fromDate,
+            LocalDate toDate,
+            VectorRecallOptions options
+    ) {
+        validateRequest(query, topK, category, fromDate, toDate);
+        var queryDocument = retrievalDocumentFactory.forQuery(query.trim());
+        var cacheKey = new QueryEmbeddingCache.Key(query.trim().toLowerCase(java.util.Locale.ROOT),
+                embeddingModel.modelName(), embeddingModel.dimensions(), RetrievalDocumentFactory.DOCUMENT_SCHEMA_VERSION);
+        var embedding = queryEmbeddings.getOrLoad(cacheKey,
+                () -> embeddingModel.embed(queryDocument, EmbeddingWorkClass.INTERACTIVE));
+        return vectorStoreGateway.compareRecall(new VectorSearchRequest(
+                embeddingModel.modelName(), embedding, topK, category, fromDate, toDate),
+                options == null ? VectorRecallOptions.defaults() : options);
+    }
+
+    private static void validateRequest(
+            String query,
+            int topK,
+            String category,
+            LocalDate fromDate,
+            LocalDate toDate
+    ) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("query must not be blank");
+        }
+        if (query.length() > MAX_QUERY_LENGTH) {
+            throw new IllegalArgumentException("query must not exceed " + MAX_QUERY_LENGTH + " characters");
+        }
+        if (topK < 1 || topK > 50) {
+            throw new IllegalArgumentException("topK must be between 1 and 50");
+        }
+        if (category != null && category.isBlank()) {
+            throw new IllegalArgumentException("category must not be blank");
+        }
+        if (fromDate != null && toDate != null && fromDate.isAfter(toDate)) {
+            throw new IllegalArgumentException("fromDate must not be after toDate");
+        }
+    }
+
     private <T> T measure(SearchStage stage, SearchStageObserver observer,
                           java.util.function.Supplier<T> supplier) {
         java.util.function.Supplier<T> aggregate = metrics == null
                 ? supplier
                 : () -> metrics.measure(stage, supplier);
         return observer == null ? aggregate.get() : observer.measure(stage, aggregate);
-    }
-
-    private record QueryEmbeddingKey(String query, String model, int dimensions, String schemaVersion) {
     }
 
     private static boolean matches(
@@ -238,7 +259,13 @@ public class SemanticSearchService {
                 paper.getCategories(),
                 paper.getSubmittedDate(),
                 hit.score(),
-                hit.text()
+                hit.text(),
+                "vector"
         );
+    }
+
+    private static SemanticSearchResult toProjectedResult(VectorSearchResult hit) {
+        return new SemanticSearchResult(hit.paperId(), hit.arxivId(), hit.title(), hit.abstractText(),
+                hit.authors(), hit.categories(), hit.submittedDate(), hit.score(), hit.text(), "vector");
     }
 }

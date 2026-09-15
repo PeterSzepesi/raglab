@@ -1,14 +1,13 @@
 package com.example.arxivrag.embedding;
 
 import com.example.arxivrag.paper.Paper;
-import org.springframework.stereotype.Component;
-
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.springframework.stereotype.Component;
 
 @Component
 public class RetrievalDocumentFactory {

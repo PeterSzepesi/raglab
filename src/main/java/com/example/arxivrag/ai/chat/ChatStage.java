@@ -8,6 +8,7 @@ public enum ChatStage {
     RETRIEVAL("retrieval"),
     TOOL_EXECUTION("tool-execution"),
     ANSWER_MODEL("answer-model"),
+    LOCAL_ANSWER("local-answer"),
     FIRST_TOKEN("first-token"),
     QUOTA_WAIT("quota-wait"),
     RETRY_BACKOFF("retry-backoff");

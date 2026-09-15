@@ -1,19 +1,23 @@
 package com.example.arxivrag.vector;
 
-import com.example.arxivrag.embedding.EmbeddingModelGateway;
-import com.example.arxivrag.embedding.RetrievalDocumentFactory;
-import com.example.arxivrag.paper.Paper;
-import com.example.arxivrag.paper.PaperRepository;
-import org.junit.jupiter.api.Test;
-
-import java.time.LocalDate;
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+
+import com.example.arxivrag.embedding.EmbeddingModelGateway;
+import com.example.arxivrag.embedding.EmbeddingWorkClass;
+import com.example.arxivrag.embedding.RetrievalDocumentFactory;
+import com.example.arxivrag.paper.Paper;
+import com.example.arxivrag.paper.PaperRepository;
+import com.example.arxivrag.search.QueryEmbeddingCache;
+import com.example.arxivrag.search.SearchCacheProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.LocalDate;
+import java.util.List;
+import org.junit.jupiter.api.Test;
 
 class SemanticSearchServiceTests {
 
@@ -25,12 +29,11 @@ class SemanticSearchServiceTests {
 
     private final PaperRepository paperRepository = mock(PaperRepository.class);
 
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+
     private final SemanticSearchService service = new SemanticSearchService(
-            embeddingModel,
-            retrievalDocumentFactory,
-            vectorStoreGateway,
-            paperRepository
-    );
+            embeddingModel, retrievalDocumentFactory, vectorStoreGateway, paperRepository,
+            new SearchMetrics(registry), new QueryEmbeddingCache(new SearchCacheProperties(), registry));
 
     @Test
     void embedsQuerySearchesGatewayAndResolvesCanonicalPaper() {
@@ -45,7 +48,7 @@ class SemanticSearchServiceTests {
 
         when(embeddingModel.modelName()).thenReturn("test-model");
         when(embeddingModel.dimensions()).thenReturn(2);
-        when(embeddingModel.embed(any())).thenReturn(List.of(1.0d, 0.0d));
+        when(embeddingModel.embed(any(), eq(EmbeddingWorkClass.INTERACTIVE))).thenReturn(List.of(1.0d, 0.0d));
         when(vectorStoreGateway.search(any())).thenReturn(List.of(new VectorSearchResult(
                 42L,
                 "2401.00042",
@@ -71,7 +74,7 @@ class SemanticSearchServiceTests {
     void emptyVectorStoreProducesEmptyResult() {
         when(embeddingModel.modelName()).thenReturn("test-model");
         when(embeddingModel.dimensions()).thenReturn(2);
-        when(embeddingModel.embed(any())).thenReturn(List.of(1.0d, 0.0d));
+        when(embeddingModel.embed(any(), eq(EmbeddingWorkClass.INTERACTIVE))).thenReturn(List.of(1.0d, 0.0d));
         when(vectorStoreGateway.search(any())).thenReturn(List.of());
 
         assertThat(service.search("no matching paper")).isEmpty();

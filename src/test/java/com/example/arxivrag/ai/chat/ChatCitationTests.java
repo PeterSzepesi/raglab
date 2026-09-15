@@ -1,9 +1,9 @@
 package com.example.arxivrag.ai.chat;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 class ChatCitationTests {
 

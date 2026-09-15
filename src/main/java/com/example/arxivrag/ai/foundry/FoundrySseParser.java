@@ -1,9 +1,8 @@
 package com.example.arxivrag.ai.foundry;
 
+import java.util.function.Consumer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-
-import java.util.function.Consumer;
 
 final class FoundrySseParser {
 

@@ -4,15 +4,13 @@ import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
 import com.example.arxivrag.vector.SemanticSearchResult;
 import com.example.arxivrag.vector.SemanticSearchService;
-import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
-
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.stereotype.Service;
 
 @Service
 public class RetrievalToolService {
@@ -30,18 +28,15 @@ public class RetrievalToolService {
     private final int defaultTopK;
 
     private final int maxTextLength;
+    private final CitationResolver citations;
 
-    public RetrievalToolService(SemanticSearchService semanticSearchService, PaperRepository paperRepository) {
-        this(semanticSearchService, paperRepository, new ChatProperties());
-    }
-
-    @Autowired
     public RetrievalToolService(SemanticSearchService semanticSearchService, PaperRepository paperRepository,
-                                ChatProperties chatProperties) {
+                                ChatProperties chatProperties, CitationResolver citations) {
         this.semanticSearchService = semanticSearchService;
         this.paperRepository = paperRepository;
         this.defaultTopK = chatProperties.getRetrievalTopK();
         this.maxTextLength = chatProperties.getMaxContextCharactersPerPaper();
+        this.citations = citations;
     }
 
     public List<Map<String, Object>> toolDefinitions() {
@@ -99,7 +94,7 @@ public class RetrievalToolService {
         var fromDate = optionalDate(arguments, "fromDate");
         var toDate = optionalDate(arguments, "toDate");
         var results = semanticSearchService.search(query, topK, category, fromDate, toDate);
-        return new ToolExecution(SEMANTIC_SEARCH, resultRows(results), citations(results));
+        return new ToolExecution(SEMANTIC_SEARCH, resultRows(results), citations.resolveResults(results));
     }
 
     private ToolExecution executeRelationalSearch(Map<String, Object> arguments) {
@@ -113,7 +108,8 @@ public class RetrievalToolService {
             throw new IllegalArgumentException("fromDate must not be after toDate");
         }
         var papers = paperRepository.searchRelational(query, category, fromDate, toDate, topK);
-        return new ToolExecution(RELATIONAL_PAPER_SEARCH, paperRows(papers), paperCitations(papers));
+        return new ToolExecution(RELATIONAL_PAPER_SEARCH, paperRows(papers),
+                citations.resolvePapers(papers, "relational"));
     }
 
     private ToolExecution executePaperLookup(Map<String, Object> arguments) {
@@ -124,7 +120,8 @@ public class RetrievalToolService {
             return new ToolExecution(PAPER_LOOKUP, List.of(), List.of());
         }
         var value = paper.get();
-        return new ToolExecution(PAPER_LOOKUP, paperRows(List.of(value)), paperCitations(List.of(value)));
+        return new ToolExecution(PAPER_LOOKUP, paperRows(List.of(value)),
+                citations.resolvePapers(List.of(value), "relational"));
     }
 
     private List<Map<String, Object>> resultRows(List<SemanticSearchResult> results) {
@@ -154,18 +151,6 @@ public class RetrievalToolService {
             row.put("submittedDate", paper.getSubmittedDate());
             return row;
         }).toList();
-    }
-
-    private static List<ChatCitation> citations(List<SemanticSearchResult> results) {
-        return results.stream()
-                .map(result -> new ChatCitation(result.paperId(), result.arxivId(), result.title(), result.score()))
-                .toList();
-    }
-
-    private static List<ChatCitation> paperCitations(List<Paper> papers) {
-        return papers.stream()
-                .map(paper -> new ChatCitation(paper.getId(), paper.getArxivId(), paper.getTitle(), null))
-                .toList();
     }
 
     private static Map<String, Object> functionDefinition(

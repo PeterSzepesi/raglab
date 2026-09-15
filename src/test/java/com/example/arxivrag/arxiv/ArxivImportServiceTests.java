@@ -1,15 +1,14 @@
 package com.example.arxivrag.arxiv;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.example.arxivrag.paper.PaperRepository;
+import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-
-import java.nio.file.Path;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 @ActiveProfiles("test")
 @SpringBootTest
@@ -48,5 +47,21 @@ class ArxivImportServiceTests {
         assertThat(result.imported()).isZero();
         assertThat(result.updated()).isEqualTo(2);
         assertThat(paperRepository.findAll()).hasSize(2);
+    }
+
+    @Test
+    void previewReportsFiltersAndMalformedLinesWithoutWritingPapers() {
+        var preview = importService.previewDataset(
+                Path.of("src/test/resources/fixtures/arxiv-tiny.jsonl"),
+                new ArxivImportOptions(java.util.List.of("cs.CL", "cs.AI", "cs.CV"),
+                        java.time.LocalDate.of(2022, 1, 1), 100));
+
+        assertThat(preview.recordsRead()).isEqualTo(4);
+        assertThat(preview.accepted()).isEqualTo(2);
+        assertThat(preview.filtered()).isEqualTo(2);
+        assertThat(preview.invalidRecords()).isEqualTo(1);
+        assertThat(preview.duplicateInFile()).isZero();
+        assertThat(preview.alreadyStored()).isZero();
+        assertThat(paperRepository.count()).isZero();
     }
 }

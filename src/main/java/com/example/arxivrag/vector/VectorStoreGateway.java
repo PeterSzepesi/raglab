@@ -21,6 +21,14 @@ public interface VectorStoreGateway {
         return List.of("EXPLAIN is not supported by the active vector store");
     }
 
+    default VectorRecallDiagnostics compareRecall(
+            VectorSearchRequest request,
+            VectorRecallOptions options
+    ) {
+        return VectorRecallDiagnostics.unsupported(request, options,
+                "Exact-versus-approximate recall diagnostics are not supported by the active vector store");
+    }
+
     default void analyze() {
     }
 }

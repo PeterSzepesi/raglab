@@ -1,15 +1,16 @@
 package com.example.arxivrag.ai.chat;
 
+import com.example.arxivrag.config.CacheConfiguration;
 import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
-
-import java.util.Optional;
 
 @Component
 public class ChatRetrievalCache {
 
-    private final Cache<Key, ChatRetrieval> cache;
+    private final Cache<Key, CachedRetrieval> cache;
     private final ChatProperties properties;
     private final ChatMetrics metrics;
 
@@ -18,41 +19,52 @@ public class ChatRetrievalCache {
         properties.validate();
         this.properties = properties;
         this.metrics = metrics;
-        cache = Caffeine.newBuilder()
-                .maximumSize(properties.getCacheMaximumSize())
-                .expireAfterWrite(properties.getCacheTtl())
-                .recordStats()
-                .build();
+        cache = CacheConfiguration.variable(properties.getCacheMaximumSize(), value ->
+                value.negative() ? properties.getNegativeCacheTtl() : properties.getCacheTtl());
         io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics.monitor(
                 registry, cache, "rag.chat.retrieval.cache");
     }
 
-    public Optional<ChatRetrieval> get(Key key) {
+    public ChatRetrieval getOrLoad(Key key, Supplier<ChatRetrieval> loader) {
+        if (key == null || loader == null) {
+            throw new IllegalArgumentException("cache key and loader must not be null");
+        }
         if (!properties.isCacheEnabled()) {
-            return Optional.empty();
+            return load(loader);
         }
-        var value = cache.getIfPresent(key);
-        if (value == null) {
+        var loaded = new AtomicBoolean();
+        var value = cache.get(key, ignored -> {
+            loaded.set(true);
+            var retrieval = load(loader);
+            return new CachedRetrieval(retrieval, retrieval.results().isEmpty()
+                    || retrieval.outcome() == ChatRetrievalOutcome.DEGRADED_LEXICAL);
+        });
+        if (loaded.get()) {
             metrics.cacheMiss();
-            return Optional.empty();
+        } else {
+            metrics.cacheHit();
         }
-        metrics.cacheHit();
-        return Optional.of(value);
+        return value.retrieval();
     }
 
-    public void put(Key key, ChatRetrieval retrieval) {
-        if (properties.isCacheEnabled() && retrieval != null && !retrieval.results().isEmpty()) {
-            cache.put(key, retrieval);
+    private ChatRetrieval load(Supplier<ChatRetrieval> loader) {
+        var started = System.nanoTime();
+        try {
+            var retrieval = loader.get();
+            if (retrieval == null) {
+                throw new IllegalStateException("retrieval cache loader returned null");
+            }
+            return retrieval;
+        } finally {
+            metrics.recordCacheLoad(Duration.ofNanos(System.nanoTime() - started));
         }
-    }
-
-    public void recordLoad(java.time.Duration duration) {
-        metrics.recordCacheLoad(duration);
     }
 
     public com.github.benmanes.caffeine.cache.stats.CacheStats stats() {
         return cache.stats();
     }
+
+    public void clear() { cache.invalidateAll(); }
 
     public record Key(
             String query,
@@ -62,7 +74,12 @@ public class ChatRetrievalCache {
             String toDate,
             int topK,
             String embeddingModel,
-            long corpusGeneration
+            long corpusGeneration,
+            String retrievalPolicyVersion,
+            String documentSchemaVersion
     ) {
+    }
+
+    private record CachedRetrieval(ChatRetrieval retrieval, boolean negative) {
     }
 }

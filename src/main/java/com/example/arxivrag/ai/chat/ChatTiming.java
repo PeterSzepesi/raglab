@@ -9,7 +9,7 @@ import java.util.stream.Collectors;
 
 public final class ChatTiming implements com.example.arxivrag.vector.SearchStageObserver {
 
-    private final String requestId = UUID.randomUUID().toString();
+    private final String requestId;
     private final long startedNanos = System.nanoTime();
     private final EnumMap<ChatStage, Long> nanos = new EnumMap<>(ChatStage.class);
     private final ChatMetrics metrics;
@@ -23,6 +23,8 @@ public final class ChatTiming implements com.example.arxivrag.vector.SearchStage
 
     public ChatTiming(ChatMetrics metrics) {
         this.metrics = metrics;
+        var correlated = org.slf4j.MDC.get("requestId");
+        this.requestId = correlated == null || correlated.isBlank() ? UUID.randomUUID().toString() : correlated;
     }
 
     public <T> T measure(ChatStage stage, Supplier<T> action) {
@@ -83,7 +85,7 @@ public final class ChatTiming implements com.example.arxivrag.vector.SearchStage
     }
 
     public synchronized void addProviderMetadata(
-            com.example.arxivrag.ai.foundry.FoundryClient.ProviderMetadata metadata) {
+            com.example.arxivrag.model.api.ChatModelGateway.ProviderCallMetadata metadata) {
         if (metadata == null) {
             return;
         }

@@ -14,7 +14,7 @@ rag:
     papers-enabled: false
     search-enabled: false
     chat-enabled: false
-    vector-stores-enabled: false
+    vector-stores-enabled: true
     benchmarks-enabled: false
 
 arxiv:

@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: arxiv-rag
+    folder: arXiv RAG
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

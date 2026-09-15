@@ -1,0 +1,12 @@
+.git
+.github
+.codex-m2
+.playwright
+node_modules
+target
+data
+benchmarks/results
+playwright-report
+test-results
+*.log
+.env*

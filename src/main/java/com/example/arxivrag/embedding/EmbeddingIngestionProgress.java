@@ -1,9 +1,8 @@
 package com.example.arxivrag.embedding;
 
-import org.springframework.stereotype.Component;
-
 import java.time.Instant;
 import java.util.UUID;
+import org.springframework.stereotype.Component;
 
 /**
  * In-process progress state for the currently running embedding job.
@@ -43,16 +42,19 @@ public class EmbeddingIngestionProgress {
     }
 
     public synchronized void providerRequestStarted() {
+        state.status = "WAITING_FOR_PROVIDER_CAPACITY";
         state.providerRequests++;
         state.updatedAt = Instant.now();
     }
 
     public synchronized void providerRequestCompleted(long latencyMillis) {
+        state.status = "RUNNING";
         state.lastProviderLatencyMillis = latencyMillis;
         state.updatedAt = Instant.now();
     }
 
     public synchronized void providerRequestFailed() {
+        state.status = "RUNNING";
         state.providerFailures++;
         state.updatedAt = Instant.now();
     }
@@ -64,6 +66,12 @@ public class EmbeddingIngestionProgress {
 
     public synchronized void complete() {
         state.status = "COMPLETED";
+        state.completedAt = Instant.now();
+        state.updatedAt = state.completedAt;
+    }
+
+    public synchronized void cancel() {
+        state.status = "CANCELLED";
         state.completedAt = Instant.now();
         state.updatedAt = state.completedAt;
     }

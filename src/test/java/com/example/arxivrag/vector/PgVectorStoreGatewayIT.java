@@ -1,21 +1,20 @@
 package com.example.arxivrag.vector;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.example.arxivrag.PostgresIntegrationTest;
 import com.example.arxivrag.paper.Paper;
 import com.example.arxivrag.paper.PaperRepository;
 import com.example.arxivrag.vector.pgvector.PgVectorStoreGateway;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 @ActiveProfiles("test")
 @TestPropertySource(properties = "vector.store.type=pgvector")
@@ -49,6 +48,23 @@ class PgVectorStoreGatewayIT extends PostgresIntegrationTest {
     @Test
     void emptyVectorTableReturnsNoResults() {
         assertThat(gateway.search(new VectorSearchRequest("test-model", vector(1.0d, 0.0d), 10))).isEmpty();
+    }
+
+    @Test
+    void comparesApproximateResultsWithTransactionLocalExactSearch() {
+        var near = paperRepository.saveAndFlush(paper("2401.20001", "Nearest vector"));
+        var far = paperRepository.saveAndFlush(paper("2401.20002", "Further vector"));
+        gateway.upsert(document(near.getId(), near.getArxivId(), 1.0d, 0.0d));
+        gateway.upsert(document(far.getId(), far.getArxivId(), 0.0d, 1.0d));
+
+        var diagnostics = gateway.compareRecall(
+                new VectorSearchRequest("test-model", vector(1.0d, 0.0d), 2, "cs.CL", null, null),
+                VectorRecallOptions.defaults());
+
+        assertThat(diagnostics.supported()).isTrue();
+        assertThat(diagnostics.approximateArxivIds()).containsExactlyElementsOf(diagnostics.exactArxivIds());
+        assertThat(diagnostics.recallAtK()).isEqualTo(1d);
+        assertThat(diagnostics.meetsRecallTarget()).isTrue();
     }
 
     private static Paper paper(String arxivId, String title) {

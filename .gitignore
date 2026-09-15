@@ -27,3 +27,10 @@ Thumbs.db
 
 # Local Codex/Maven dependency cache
 /.codex-m2/
+
+# Front-end toolchain caches
+/node_modules/
+/.npm-cache/
+/playwright-report/
+/test-results/
+/.playwright/
