@@ -26,7 +26,7 @@
         <jacoco.version>0.8.15</jacoco.version>
         <maven-enforcer.version>3.6.3</maven-enforcer.version>
         <spotbugs-maven.version>4.10.4.1</spotbugs-maven.version>
-        <spotless-maven.version>3.9.0</spotless-maven.version>
+        <spotless-maven.version>3.10.4</spotless-maven.version>
     </properties>
 
     <dependencyManagement>
