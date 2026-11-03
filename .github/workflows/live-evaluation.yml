@@ -40,7 +40,7 @@ jobs:
         run: java -jar target/arxiv-rag-0.0.1-SNAPSHOT.jar --spring.profiles.active=foundry embed-papers --max-papers=5
       - name: Run bounded cold and warm evaluation
         run: java -jar target/arxiv-rag-0.0.1-SNAPSHOT.jar --spring.profiles.active=foundry chat-benchmark --max-questions=${{ inputs.max_questions }} --cache=both
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: live-foundry-benchmark
