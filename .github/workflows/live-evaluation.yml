@@ -21,7 +21,7 @@ jobs:
       AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_CHAT_DEPLOYMENT }}
       AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
